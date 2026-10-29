@@ -1,0 +1,23 @@
+# Read-only reference checkouts (see THIRD_PARTY.md)
+refs/
+
+# Build outputs and console artifacts
+build/
+dist/
+.deps/
+*.pkg
+*.oelf
+*.elf
+*.gp4
+
+# Console runs: raw logs and screenshots (one summary line each goes to docs/ps4/LOG.md)
+logs/
+
+# Windows binaries are private inputs, never tracked
+*.exe
+*.dll
+
+# Editor / tooling
+.vscode/
+*.swp
+__pycache__/
