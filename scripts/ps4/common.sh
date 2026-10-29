@@ -25,10 +25,32 @@ BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 LOGS_DIR="${LOGS_DIR:-$REPO_ROOT/logs}"
 OO_PS4_TOOLCHAIN="${OO_PS4_TOOLCHAIN:-$HOME/.local/opt/openorbis}"
-ORBIS_COMPAT_DIR="${ORBIS_COMPAT_DIR:-$REFS_DIR/orbis-compat}"
+export OO_PS4_TOOLCHAIN
+# PkgTool.Core is a self-contained .NET Core 3 app that cannot load Ubuntu 26.04's
+# ICU 78 ("Couldn't find a valid ICU package"); it needs no culture data.
+export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT="${DOTNET_SYSTEM_GLOBALIZATION_INVARIANT:-1}"
+ORBIS_COMPAT_DIR="${ORBIS_COMPAT_DIR:-$REFS_DIR/orbis-compat}"     # source (read-only)
+ORBIS_COMPAT_BUILD="${ORBIS_COMPAT_BUILD:-$BUILD_DIR/orbis-compat}" # build.sh compat output
+# What consumers (mesa, probes) see as ORBIS_COMPAT_DIR: include/ -> the source,
+# build/ -> ORBIS_COMPAT_BUILD, the layout mesa-ps4's scripts expect.
+ORBIS_COMPAT_STAGE="${ORBIS_COMPAT_STAGE:-$BUILD_DIR/orbis-compat-stage}"
 ORBIS_KIT_DIR="${ORBIS_KIT_DIR:-$REFS_DIR/orbis-porting-kit}"
-MESA_PS4_DIR="${MESA_PS4_DIR:-$REFS_DIR/mesa-ps4}"
+MESA_PS4_DIR="${MESA_PS4_DIR:-$REFS_DIR/mesa-ps4}"                 # source (read-only)
+MESA_PS4_COMMIT="${MESA_PS4_COMMIT:-1a59cc1}"
+MESA_SRC_DIR="${MESA_SRC_DIR:-$BUILD_DIR/src/mesa-ps4}"            # local clone we build in
+MESA_BUILD_DIR="${MESA_BUILD_DIR:-$BUILD_DIR/mesa-ps4}"
 PROSPERO_WIN_DIR="${PROSPERO_WIN_DIR:-$REPO_ROOT/third_party/prospero-win}"
+
+# Ubuntu installs LLVM 18 as clang-18 etc.; orbis-compat and mesa call plain
+# clang/ld.lld/llvm-ar, so put LLVM 18 first.
+LLVM_BIN="${LLVM_BIN:-/usr/lib/llvm-18/bin}"
+case ":$PATH:" in *":$LLVM_BIN:"*) ;; *) [ -d "$LLVM_BIN" ] && PATH="$LLVM_BIN:$PATH" ;; esac
+export PATH
+
+# Where the title sends netlog datagrams: this host's address on the route to the console.
+if [ -z "${PS4_NETLOG_HOST:-}" ]; then
+    PS4_NETLOG_HOST="$(ip -c=never -4 -o route get "$PS4_HOST" 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' || true)"
+fi
 
 # Capture stick: set PS4_CAPTURE_DEV to a /dev/videoN to skip auto-detection.
 PS4_CAPTURE_DEV="${PS4_CAPTURE_DEV:-}"
@@ -48,6 +70,14 @@ build_id() {
 }
 
 timestamp() { date +%Y%m%d-%H%M%S; }
+
+# PkgTool.Core with the private OpenSSL 1.1 it needs (setup-host.sh --install-openssl11).
+OPENSSL11_PREFIX="${OPENSSL11_PREFIX:-$HOME/.local/opt/openssl-1.1}"
+pkgtool() {
+    local p
+    p="$(oo_tool PkgTool.Core)" || die "PkgTool.Core not found under $OO_PS4_TOOLCHAIN/bin/linux"
+    LD_LIBRARY_PATH="$OPENSSL11_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$p" "$@"
+}
 
 # OpenOrbis tool lookup: the release asset puts Linux binaries in bin/linux/.
 oo_tool() {

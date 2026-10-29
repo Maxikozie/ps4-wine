@@ -13,6 +13,12 @@ from one of them, the derived code carries a comment
 
 and a row in the "Derived code" table below.
 
+## Host-side tools (not shipped)
+
+| Tool | Version | Licence | Why |
+|---|---|---|---|
+| OpenSSL, private copy under `~/.local/opt/openssl-1.1` | 1.1.1w, sha256 `cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8` | OpenSSL/SSLeay | PkgTool.Core (.NET Core 3.0) `pkg_build` needs OpenSSL 1.x; Ubuntu 26.04 has only 3.x. Used by `pkgtool()` in `common.sh` only (`setup-host.sh --install-openssl11`) |
+
 ## Reference repositories (`refs/`)
 
 | Repository | Commit pinned here | Licence | What we use it for |
@@ -21,8 +27,7 @@ and a row in the "Derived code" table below.
 | [orbis-ports/mesa-ps4](https://github.com/orbis-ports/mesa-ps4) | `1a59cc1` (2026-09-18) | MIT (Mesa) | RADV for Liverpool/Gladius with the no-DRM winsys and the sceVideoOut WSI (`src/vulkan/wsi/wsi_orbis.c`) |
 | [orbis-ports/orbis-compat](https://github.com/orbis-ports/orbis-compat) | `6922a7b` (2026-09-21, archived) | MIT; `cmake/orbis-tls.ld` GPL-3.0-only; `include/sys/ioccom.h` BSD-3 | libc/pthread corrections over the OpenOrbis SDK, `orbis_jit` API, UDP netlog, `ps4_app` log tee, packaging recipe |
 | [orbis-ports/ps4-mesa-docs](https://github.com/orbis-ports/ps4-mesa-docs) | `deb1903` (2026-09-19) | (docs) | Handoff notes, CTS results, radeon_info dumps, memory and GPU traps |
-| [orbis-ports/orbis-porting-kit](https://github.com/orbis-ports/orbis-porting-kit) | to clone in milestone a (archived) | MIT (see its LICENSING) | `make-pkg.sh`, `deploy.sh`, `logs.sh`, `log-receiver.py`, the Vulkan loader shim (`vkloader/`), `cmake/ps4-openorbis.cmake`, `cmake/orbis.ini.in` |
-| [orbis-ports/orbsdk](https://github.com/orbis-ports/orbsdk) | to clone in milestone a | (check) | Successor of orbis-compat + the kit: one owned sysroot |
+| [orbis-ports/orbis-porting-kit](https://github.com/orbis-ports/orbis-porting-kit) | `213b0c3` (2026-09-21, archived) | MIT; `cmake/orbis-tls.ld` GPL-3.0-only | `cmake/orbis.ini.in` (meson cross template for `build.sh mesa`), `orbis-tls.ld`, `make-pkg.sh`, `deploy.sh`, `logs.sh`, `log-receiver.py`, the Vulkan loader shim (`vkloader/`), `cmake/ps4-openorbis.cmake`. mesa-ps4's handoff names kit `0aff500`; HEAD built mesa-ps4 `1a59cc1` cleanly |
 | [alechurri/nx-on-orbis](https://github.com/alechurri/nx-on-orbis) | `11b2c65` (2026-10-07) | GPL-3.0-or-later | PS4 Pro port of Eden: memory/fault/JIT findings, the package layout that grants ~4.4 GiB, `probe/probe.c`, `package-eden.sh`. **Never copied into LGPL code** |
 | [OpenOrbis/OpenOrbis-PS4-Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain) | `0a1aaf9` (v0.5.4+2) | GPL-3.0 (link.x, `include/orbis`, crtlib.o, create-fself/create-gp4); LGPL-3.0 (PkgTool/LibOrbisPkg); MIT (musl crt); Apache-2.0 w/ LLVM exception (libc++) | The toolchain: clang target, `link.x`, `create-fself`, `create-gp4`, `PkgTool.Core`, sample `sce_module`/`right.sprx` files |
 | [leolobato/playden-ps5](https://github.com/leolobato/playden-ps5) | `7d688b3` (2026-10-29) | GPL-3.0-or-later | Conventions: FTP deploy with verify-and-rename, log collection, `THIRD_PARTY_NOTICES.md` format, prospero-win profile usage |
@@ -32,6 +37,10 @@ and a row in the "Derived code" table below.
 | File in ps4-wine | Derived from | Licence of the source | Notes |
 |---|---|---|---|
 | `scripts/ps4/pkg.sh` | nx-on-orbis `package-eden.sh` @ `11b2c65`; OpenOrbis `samples/hello_world/Makefile` @ `0a1aaf9` | GPL-3.0-or-later; GPL-3.0 | Package layout and SFO entries (the layout that grants ~4.4 GiB direct memory) |
+| `scripts/ps4/build.sh` (`build_mesa`) | mesa-ps4 `build-support/orbis/build.sh` @ `1a59cc1` | MIT | Cross-file substitution, meson option set, build id, sysconf check; without nix, out of the reference tree |
+| `probes/probe.c` | nx-on-orbis `probe/probe.c` @ `11b2c65` (stage harness, memory ladder, VA/alias, JIT, fault resume, range_free); nx-on-orbis `frontend/menu/rom_menu.cpp` @ `11b2c65` (VideoOut constants and setup) | GPL-3.0-or-later | Milestone a probe. The marked-MXCSR frame check follows the idea of prospero-win patch 0883 (no code taken) |
+| `probes/probe_sce.h` | nx-on-orbis `probe/probe.c` @ `11b2c65` lines 49-68 | GPL-3.0-or-later | libkernel declarations by asm label |
+| `probes/probe_netlog.c` | orbis-compat `optional/orbis_netlog.cpp` @ `6922a7b` | MIT | UDP netlog, rewritten in C |
 
 ## Shipped in a package (to be filled from milestone a on)
 
@@ -41,5 +50,7 @@ machine for anyone else:
 
 | Component | Version | Licence | Source |
 |---|---|---|---|
-| OpenOrbis `sce_module/libc.prx`, `libSceFios2.prx`, `sce_sys/about/right.sprx` | v0.5.4 | GPL-3.0 (OpenOrbis samples) | toolchain release asset |
+| OpenOrbis `sce_module/libc.prx`, `libSceFios2.prx`, `sce_sys/about/right.sprx` | v0.5.4 | GPL-3.0 (OpenOrbis samples) | toolchain release asset `toolchain-llvm-18.tar.gz`, sha256 `3c7cd5bb593ca74fa1c13fd59f3938dc0fc07985167f7275063019e63abe4526` |
+| OpenOrbis `crt1.o`, `link.x`, `libc.a` (musl), `libc++` | v0.5.4 | MIT (musl crt), GPL-3.0 (`link.x`), Apache-2.0 with LLVM exception (libc++) | linked into the probe's `eboot.bin` |
+| orbis-compat `liborbis-compat.a` members, `crt/crtlib.o` | `6922a7b` | MIT | linked into the probe and `probe_mod.prx` |
 | (Wine, FreeType, Mesa, DXVK, orbis-compat, LLVM runtimes: added when they are first packaged) | | | |

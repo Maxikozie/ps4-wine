@@ -1,0 +1,5 @@
+23:14:01 K <118>[Syscore App] PS4WINE probe start build=abc1234 argc=1 netlog=192.168.8.116
+23:14:02 N [   0.004] == info (timeout 15 s)
+23:14:40 K <118>[Syscore App] PS4WINE a hello ok build=abc1234 direct_mib=4464 flex_mib=448 reserve_gib=16 jit=ok sysarch=fs+gs frame_mc=64 frame_fx=320 frame_fs=1152 cs32=ok loadexec=pending dlsym=ok cpus=7
+23:14:40 N PS4WINE a hello ok build=abc1234 direct_mib=4464 flex_mib=448 reserve_gib=16 jit=ok sysarch=fs+gs frame_mc=64 frame_fx=320 frame_fs=1152 cs32=ok loadexec=pending dlsym=ok cpus=7
+23:14:45 N PS4WINE a hello ok build=abc1234 direct_mib=4464 flex_mib=448 reserve_gib=16 jit=ok sysarch=fs+gs frame_mc=64 frame_fx=320 frame_fs=1152 cs32=crash loadexec=ok dlsym=ok cpus=7

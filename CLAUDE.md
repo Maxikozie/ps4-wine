@@ -50,14 +50,15 @@ rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
 | Our netlog | UDP `18194` from the title to this host (orbis-compat's netlog scheme) |
 | Console paths | packages `/data/pkg/`, our data `/data/ps4-wine/{prefix,profiles,logs,cache}`, installed app `/user/app/<TITLE_ID>/` |
 | Title | `PSWN00001`, content `IV0000-PSWN00001_00-PS4WINE000000000` |
-| Host | Kubuntu, x86_64. Toolchain at `$OO_PS4_TOOLCHAIN` (default `~/.local/opt/openorbis`), installed in milestone a |
+| Host | Kubuntu (Ubuntu 26.04), x86_64. Toolchain at `$OO_PS4_TOOLCHAIN` (default `~/.local/opt/openorbis`); `common.sh` puts `/usr/lib/llvm-18/bin` first in PATH and sets `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` (PkgTool.Core cannot load ICU 78) |
 | Screen | USB HDMI capture stick, `scripts/ps4/shot.sh` (auto-detects; the laptop webcam is excluded; override with `PS4_CAPTURE_DEV`) |
 
 ## Scripts (`scripts/ps4/`)
 
 | Script | Does |
 |---|---|
-| `build.sh <target>` | `--check-toolchain` now; build targets fill in per milestone |
+| `setup-host.sh` | prints missing apt packages (never sudo); `--install-toolchain` (OpenOrbis v0.5.4, sha256-pinned); `--install-openssl11` (private OpenSSL 1.1 that PkgTool.Core's `pkg_build` needs) |
+| `build.sh <target>` | `--check-toolchain`; `compat` (orbis-compat → `build/orbis-compat`), `mesa` (mesa-ps4 RADV, no nix, local clone → `build/mesa-ps4`), `probe` (→ `dist/probe-<id>.pkg`), `probe-test` (host tests); later targets fill in per milestone |
 | `pkg.sh --elf X` | ELF → fSELF → `.pkg` in the layout that grants ~4.4 GiB direct memory |
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
@@ -87,9 +88,16 @@ start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /
   (`sce_module/libc.prx` + `libSceFios2.prx`, `sce_sys/about/right.sprx`,
   SFO `CATEGORY gd`, `SYSTEM_VER 0`, paid `0x3800000000000011`). Other layouts
   give 768 MiB or do not boot. Largest `sceKernelReserveVirtualRange`: 16 GiB.
-- Faults come through `sceKernelInstallExceptionHandler`; the FreeBSD
-  `mcontext` sits at ucontext+64; measured cs64 `0x43`, ss `0x3b`. The FXSAVE
-  and FS-base offsets in the frame are not yet measured on PS4.
+- Faults come through `sceKernelInstallExceptionHandler` or FreeBSD `sigaction`
+  (FreeBSD flag values and struct layout, not the SDK's): both give the PS5's
+  frame, measured 2026-10-30: mcontext at ucontext+64 (rip +224), FXSAVE +320,
+  FS base +1152, cs64 `0x43`. `sysarch` 128–131 get/set FS and GS; `rdfsbase`
+  is SIGILL. A far jump to selector `0x33` runs 32-bit code and returns.
+- `sceSystemServiceLoadExec(path, args)` restarts the title; the new process
+  gets the arguments from `argv[0]` on (no program name). An app PRX loads from
+  `/app0/assets` and `sceKernelDlsym` resolves its exports (link it
+  `--export-dynamic`), but its constructors did not run even with
+  orbis-compat's `crtlib.o` (the SDK's never walks `.init_array`).
 - `libc.a` was built with a 16-bit `wchar_t`: `wmemchr` and friends are wrong
   for 4-byte `wchar_t`. `secure_getenv` always returns NULL.
 - `sceKernelDebugOutText` (klog) costs 8–15 ms per line and blocks when nothing
@@ -100,5 +108,6 @@ start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /
   stalls; surface formats are RGBA only (BGRA swaps red and blue); arena size
   via `ORBIS_ARENA_MIB`. Vulkan titles link `libvulkan_radeon.a` with
   `--whole-archive` plus the kit's vkloader thunks.
-- Compile with `-march=btver2 -femulated-tls -fno-omit-frame-pointer`; about 7
-  of 8 Jaguar cores at ~1.6 GHz (Slim) are usable.
+- Compile with `-march=btver2 -femulated-tls -fno-omit-frame-pointer`. The
+  title's cpuset is `0x3f`: 6 Jaguar cores at 1.59 GHz (Slim, TSC 1594 MHz);
+  pinning to cores 6/7 returns `0x80020001`.

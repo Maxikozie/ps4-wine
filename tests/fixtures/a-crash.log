@@ -1,0 +1,2 @@
+23:14:01 K <118>[Syscore App] PS4WINE probe start build=abc1234 argc=1 netlog=192.168.8.116
+23:14:05 K <118>[Syscore App] [   4.100] !! CRASH: signal 11 in stage dmem, rip=0x401234 (eboot+0x1234), fault address 0x0, rsp=0x7ff000

@@ -34,8 +34,8 @@ D3D8/9/10/11 (DXVK 2.6.2, PE, beside the game) -> winevulkan.dll
 ```
 
 One title process per game, as on the PS5: the launcher restarts the title
-with the game's arguments (`sceSystemServiceLoadExec`, to be verified on the
-PS4; see §4.1), so Wine always starts in a clean process and nothing has to
+with the game's arguments (`sceSystemServiceLoadExec`: works on the PS4, arguments
+arrive from `argv[0]` on; see §4.1), so Wine always starts in a clean process and nothing has to
 be torn down.
 
 ## 2. Repository layout
@@ -100,9 +100,9 @@ file against a different API; **drop** has no PS4 counterpart.
 |---|---|
 | `wine/ps5/pw_wine_prx.c` (PRXDESC1 export table scanned from `sceKernelGetModuleInfo` segments, because PS5 FW 12.02 `sceKernelDlsym` does not see app PRX exports) | OpenOrbis apps load their own PRX with `sceKernelLoadStartModule` + `sceKernelDlsym` (`samples/library_example`, RetroArch cores). Probe in milestone c; if dlsym resolves, the descriptor becomes optional and `tools/gen_prx_descriptor.py` still supplies `module_start` |
 | `wine/ps5/pw_wine_dmem_ps5.c` (type `0x0c`, map `0x03`/`0xf2`, `sceKernelReserveVirtualRange` FIXED\|NO_OVERWRITE, 16 GiB then 512 GiB high area at `0x1000000000`, patches 0570/0600/0895/0897/0982) | `pw_wine_dmem_orbis.c`: `sceKernelAllocateDirectMemory(WB_ONION)` → `sceKernelMapDirectMemory` RW → `sceKernelMprotect` for EXEC (orbis-compat `src/orbis_jit.c` recipe, MIT). Reservation ceiling is 16 GiB (64 GiB fails `0x8002000c`), so `PW_PS5_HIGH_RESERVE_GB` starts at 8–16. Budget: ~4.4 GiB direct in total, RADV arena 1 GiB of it. `pw_wine_dmem.c` (policy, host-tested against a kernel model) is as-is |
-| 0500/0501/0590/0903 (mcontext at ucontext+64, FXSAVE at +320, FS base at +1152, RIP +224; GS=TEB via `sysarch(131)`, FS restored via `sysarch(129)` on each Unix entry) | nx-on-orbis measured mcontext at +64 on PS4 too (rip +160, rsp +184, fault address +136 inside it, cs `0x43`, ss `0x3b`). FXSAVE and FS-base offsets, and whether PS4 libkernel exposes `sysarch` for FS/GS, are **unmeasured**: milestone a's probe measures them, the patch constants follow |
+| 0500/0501/0590/0903 (mcontext at ucontext+64, FXSAVE at +320, FS base at +1152, RIP +224; GS=TEB via `sysarch(131)`, FS restored via `sysarch(129)` on each Unix entry) | nx-on-orbis measured mcontext at +64 on PS4 too (rip +160, rsp +184, fault address +136 inside it, cs `0x43`, ss `0x3b`). **Measured in milestone a (LOG.md 2026-10-30): the PS4 frame equals the PS5's** (mc +64, rip +224, FXSAVE +320, FS base +1152, cs `0x43`, through both `sigaction` and `sceKernelInstallExceptionHandler`), and `sysarch` 128–131 get/set FS and GS. The 0500/0501 constants carry over unchanged |
 | 0883 (`native_libkernel_resolver.c`: raw `sigaction` (syscall 416) through the `syscall` instruction at `getppid+10` inside libkernel, frame self-check with a marked MXCSR, `__wine_prospero_native_wow64_caps`) | Same stub shape is expected (FreeBSD-style `mov $N,%rax; mov %rcx,%r10; syscall`) but must be re-proven; PS4 numbers may differ. Also compare with `sceKernelInstallExceptionHandler`, which nx-on-orbis used for all faults. Keep the gate: caps stay 0 unless every check passes, and the translator runs |
-| 0881/0882 (13 of 16 CPUs, SCHED_RR at priority 700) | PS4 games get about 7 of 8 Jaguar cores; measure with `cpuset_getaffinity`/`sceKernelGetCpumode` and re-tune. Affinity constants in `thread_budget.h` are per-thread arena sizes and stay |
+| 0881/0882 (13 of 16 CPUs, SCHED_RR at priority 700) | Measured: the title's cpuset is `0x3f` (6 of 8 Jaguar cores at 1.59 GHz on the Slim; affinity to cores 6/7 is refused). Re-tune for 6. Affinity constants in `thread_budget.h` are per-thread arena sizes and stay |
 | 0460 (win32u's Vulkan driver: win32 surface → `vkCreateDisplayPlaneSurfaceKHR`, title releases VideoOut first) | mesa-ps4 presents through `VK_EXT_headless_surface` (`wsi_orbis.c`), not `VK_KHR_display`. The driver creates a headless surface; patch 0450 (host-only `VK_KHR_display`) becomes a host-only `VK_EXT_headless_surface`. VideoOut has one display: the title still hands it over before the first swapchain (`pw_wine_release_display`) |
 | `wine/ps5/pw_vulkan_radv.c` (`vkGetInstanceProcAddr` → `vk_icdGetInstanceProcAddr`, hardware cursor, idle/tiled GDI show) | `pw_vulkan_radv_orbis.c`: link `libvulkan_radeon.a` `--whole-archive` plus the kit's `vkloader.c`/`vkthunks.c` (771 weak thunks); no hardware cursor API known on PS4 (software cursor from patch 0420 suffices) |
 | `native/pw_hid_ps5.c`, `pw_osk_ps5.c` (sysmodule IDs 0x0106/0x00a9, `sceKeyboard*`/`sceMouse*`, `sceImeDialog*`) | Same module IDs and record layouts as OpenOrbis documents; PS4 `OrbisImeDialogSetting` layout differs: adapt field by field |
@@ -142,7 +142,7 @@ file against a different API; **drop** has no PS4 counterpart.
 ### 4.2 libc, pthreads, TLS
 - Compile everything against orbis-compat's overlay: `-isystem orbis-compat/include` before the SDK, `-include orbis_prefix.h`, link `liborbis-compat.a` `--whole-archive`, `-lc` last. It fixes `struct stat`, pthread attr sizes, 2 MiB thread stacks, `timer_create`, `clock_gettime`, relative paths, `umtx` over pthreads.
 - Wine's Unix side uses `__thread` only in a few places (wowprospero's `unix.c`): `-femulated-tls` plus compiler-rt's `emutls.o`, as on the PS5.
-- Wine's `__wine_syscall_dispatcher` keeps FS = libc TLS and GS = TEB (patch 0500). Whether PS4 libkernel offers `sysarch(AMD64_SET_GSBASE)` decides between patch 0500 as-is and an LDT-free alternative (the probe answers this in milestone a; without a way to set GS the i386 side cannot run at all, so this is a go/no-go for everything after c).
+- Wine's `__wine_syscall_dispatcher` keeps FS = libc TLS and GS = TEB (patch 0500). Whether PS4 libkernel offers `sysarch(AMD64_SET_GSBASE)` decides between patch 0500 as-is and an LDT-free alternative (answered in milestone a: `sysarch(AMD64_SET_GSBASE)` works and `%gs:` loads then read through the new base, so patch 0500 stays as-is).
 
 ### 4.3 Memory
 - Three pools: flexible (~384–440 MiB; libc malloc, anonymous mmap), direct (~4.4 GiB; everything large), GPU arena (direct memory the RADV winsys carves at startup, `ORBIS_ARENA_MIB`, default ladder 1024/512/256/128).
@@ -157,7 +157,7 @@ file against a different API; **drop** has no PS4 counterpart.
 
 ### 4.5 32-bit execution
 - **Phase 1 (milestone f):** `wowprospero.dll` + `wowprospero.prx`, selected by `HKLM\Software\Microsoft\Wow64\x86 = wowprospero.dll` and `WINE_PS5_WOW64_CPU`. Needs only RWX memory above 4 GiB and the SEGV hook.
-- **Phase 2 (same milestone, informational):** `wow64native.dll` requires a 32-bit code selector. prospero-win uses CS32 `0x33`, SS `0x3b`, CS64 `0x43`, which are exactly stock FreeBSD amd64's GDT (`GUCODE32_SEL`, `GUDATA_SEL`, `GUCODE_SEL`). nx-on-orbis measured cs64 `0x43` and ss `0x3b` on the PS4, so a far jump to `0x33` is plausible but unverified. The probe performs one guarded `ljmp` into a 32-bit stub and reports `native_caps`; the game keeps running on the translator either way. No GoldHEN kernel patching to install selectors: that would be firmware-specific.
+- **Phase 2 (same milestone, informational):** `wow64native.dll` requires a 32-bit code selector. prospero-win uses CS32 `0x33`, SS `0x3b`, CS64 `0x43`, which are exactly stock FreeBSD amd64's GDT (`GUCODE32_SEL`, `GUDATA_SEL`, `GUCODE_SEL`). nx-on-orbis measured cs64 `0x43` and ss `0x3b` on the PS4, and milestone a's probe ran 32-bit code after a far jump to `0x33` below 4 GiB and came back through `0x43` (no fault). The milestone f readiness probe still performs its own guarded checks and reports `native_caps`; the game keeps running on the translator either way. No GoldHEN kernel patching to install selectors: that would be firmware-specific.
 - Vulkan batching (`PW_VK_BATCH=1`) is on for both backends; `PW_VK_BATCH_STATS=1` logs crossings per present, the number milestone g gates on.
 
 ### 4.6 Threads and scheduling

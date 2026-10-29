@@ -96,8 +96,8 @@ fi
 
 # 5. param.sfo
 SFO="$STAGE/sce_sys/param.sfo"
-run "$PKGTOOL" sfo_new "$SFO"
-sfo() { run "$PKGTOOL" sfo_setentry "$SFO" "$1" --type "$2" --maxsize "$3" --value "$4"; }
+run pkgtool sfo_new "$SFO" >/dev/null
+sfo() { run pkgtool sfo_setentry "$SFO" "$1" --type "$2" --maxsize "$3" --value "$4" >/dev/null; }
 sfo APP_TYPE Integer 4 1
 sfo APP_VER Utf8 8 "$VERSION"
 sfo ATTRIBUTE Integer 4 0
@@ -118,7 +118,7 @@ if [ "$DRY" = 1 ]; then
     exit 0
 fi
 ( cd "$STAGE" && "$CREATE_GP4" -out pkg.gp4 --content-id="$CID" --files "$FILES" >/dev/null )
-( cd "$STAGE" && "$PKGTOOL" pkg_build pkg.gp4 "$OUT" >/dev/null )
+( cd "$STAGE" && pkgtool pkg_build pkg.gp4 "$OUT" >/dev/null )
 [ -f "$OUT/$CID.pkg" ] || die "PkgTool produced no $OUT/$CID.pkg"
 mv -f "$OUT/$CID.pkg" "$OUT/$PKG_BASENAME.pkg"
 log "wrote $OUT/$PKG_BASENAME.pkg ($(stat -c %s "$OUT/$PKG_BASENAME.pkg") bytes); ELF kept as build/elf/$NAME-$BID.elf"
