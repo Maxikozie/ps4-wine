@@ -13,7 +13,8 @@ verdict column: a pass, a recovered data-import fault that still passes, a resum
 a VideoOut hang, no binding method, stage records only (NOLOG naming the stages), a crash. Then d2 and
 d3 on tests/fixtures/d2-*.log (one gdi64.exe launch gives both lines) with a generated dump of
 gdi64.exe's window on the centred 800x600 desktop: a pass, no fonts (d2 passes, d3 fails), a fault in
-the program, stage records only. d4-d5 must exit 2 (rule not implemented). The FTP fetch is not
+the program, stage records only. d4 on tests/fixtures/d4-*.log with a generated board (cell open,
+cell closed) and a launch whose click opened nothing. d5 must exit 2 (rule not implemented). The FTP fetch is not
 tested here.
 Exit 0 when every case matches.
 USAGE
@@ -48,6 +49,16 @@ window "$TMP/win-rgba.raw" rgba
 window "$TMP/win-bgra.raw" bgra
 "$ROOT/scripts/ps4/fbshot.sh" --raw "$TMP/win-rgba.raw" --out "$TMP/win-rgba.png" >/dev/null 2>&1
 "$ROOT/scripts/ps4/fbshot.sh" --raw "$TMP/win-bgra.raw" --out "$TMP/win-bgra.png" >/dev/null 2>&1
+# winemine on the centred desktop: the smiley's yellow around 640,298 and the clicked cell around 634,390,
+# open (black) or closed (dark green).
+mine() { # mine OUT CELL
+    ffmpeg -loglevel error -y -f lavfi -i "color=c=black:s=1920x1080" \
+        -vf "drawbox=x=630:y=290:w=20:h=16:color=0xffff00:t=fill,drawbox=x=632:y=385:w=14:h=14:color=$2:t=fill" \
+        -frames:v 1 -f rawvideo -pix_fmt rgba "$TMP/mine.raw"
+    "$ROOT/scripts/ps4/fbshot.sh" --raw "$TMP/mine.raw" --out "$1" >/dev/null 2>&1
+}
+mine "$TMP/mine-open.png" 0x000000
+mine "$TMP/mine-closed.png" 0x008000
 
 # case <milestone> <fixture> <expected exit> <expected verdict> <substring of the line or ""> [check.sh options...]
 case_() {
@@ -80,7 +91,10 @@ case_ d3 d2-nofonts.log    1 FAIL  "tahoma=0 != 1"
 case_ d2 d2-fault.log      1 FAIL  "win32u=fail != ok" --no-shot
 case_ d3 d2-fault.log      1 FAIL  "exit=fault != 0"
 case_ d2 d2-stagesonly.log 1 NOLOG "stage records: w32u_bind,ft_bind,display" --no-shot
-for ms in d4 d5; do case_ "$ms" d1-pass.log 2 "" "" --no-shot; done
+case_ d4 d4-pass.log       0 "PASS (framebuffer)" "board_opened=1" --fb --shot "$TMP/mine-open.png"
+case_ d4 d4-pass.log       1 FAIL  "pixel 634,390" --fb --shot "$TMP/mine-closed.png"
+case_ d4 d4-closed.log     1 FAIL  "board_opened=0 != 1" --no-shot
+case_ d5 d1-pass.log 2 "" "" --no-shot
 
 if [ "$fails" -ne 0 ]; then echo "check_d_test: $fails failure(s)"; exit 1; fi
 echo "check_d_test: all passed"

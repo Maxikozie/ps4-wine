@@ -95,10 +95,10 @@ riskiest first, each with its own `check.sh` rule (details and line formats in
 | d1 | Cross-PRX binding: a two-PRX test (loader imports, data import, generated thunk table) and win32u.prx's 78 ntdll imports checked slot by slot; in the same launch, the title's linear VideoOut test pattern, the DS4 probe and `hello.exe` (c regression). Separate stages in that order (bind stages first), each result fsync'd to `/data/ps4-wine/d1/progress.txt` and logged before the next stage; a faulting stage is recovered or, after a crash, skipped on relaunch | `PS4WINE d1 bind=import\|thunk videoout=ok fb=ok hello=ok` and `--fb` 960,540 = 0,255,0, 240,135 = 255,128,0 |
 | d2 | win32u inside Wine: user driver installed, offscreen GDI from `gdi64.exe`, frames reach the title's sink | `PS4WINE d2 gdi win32u=ok pixel=ff8000 exit=0` |
 | d3 | FreeType (`libfreetype.prx`) and Wine's fonts in the prefix | `PS4WINE d3 fonts n>=1 tahoma=1 text_px>=50 exit=0` (`n>=13` was a guess, replaced before the first d3 run) |
-| d4 | winemine on screen, scripted click opens the board | `PS4WINE d4 winemine frames>=600 board_opened=1 refused=0 fb=ok` and `--fb` board pixels taken from the host reference run before the console run |
+| d4 | winemine on screen, scripted click opens the board | `PS4WINE d4 winemine frames>=2 board_opened=1 refused=0 fb=ok` and `--fb` 640,298 = 255,255,0, 634,390 = 0,0,0 from the host reference run (`frames>=600` replaced before the first d4 run: frames come on changes only) |
 | d5 | DS4 drives pointer and buttons: milestone d's own line | the d rule above |
 
-d1 passed 2026-10-30 14:45 (first launch); d2 and d3 passed 2026-10-30 15:29 (one launch, the fifth). The d3 rule was settled before its first run as `n>=1 tahoma=1 text_px>=50 exit=0` (`HANDOFF-d.md`).
+d1 passed 2026-10-30 14:45 (first launch); d2 and d3 passed 2026-10-30 15:29 (one launch, the fifth); d4 passed 2026-10-30 15:52 (second launch). The d3 rule was settled before its first run as `n>=1 tahoma=1 text_px>=50 exit=0` (`HANDOFF-d.md`).
 
 **e.** The title releases VideoOut when Wine creates its first surface. The
 sample must present at 1920×1080 (the one size known to be accepted) before

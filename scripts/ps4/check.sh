@@ -23,10 +23,11 @@ usage: scripts/ps4/check.sh <a|b|c|d|d1..d5|e|f|g|h> [--log FILE] [--shot FILE] 
 Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
                 (orange marker: swapped red and blue fail it); d1 the same two on the title's VideoOut
                 test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
-             d2 960,540 = 0,255,0 and 780,410 = 255,128,0 (gdi64.exe's window on the framebuffer).
+             d2 960,540 = 0,255,0 and 780,410 = 255,128,0 (gdi64.exe's window on the framebuffer);
+             d4 640,298 = 255,255,0 (winemine's smiley) and 634,390 = 0,0,0 (the clicked cell, opened).
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
-and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4-d5 are not
-implemented yet (exit 2).
+and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
+scripted click; d5 is not implemented yet (exit 2).
 USAGE
 }
 
@@ -46,7 +47,7 @@ while [ $# -gt 0 ]; do
 done
 case "$MS" in a|b|c|d|d1|d2|d3|d4|d5|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
-case "$MS" in d4|d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
+case "$MS" in d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -104,6 +105,11 @@ case "$MS" in
         # 100,75; the desktop centred on 1920x1080 at 560,240 (scale 1).
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "780,410=255,128,0") ;;
     d3) word fonts; req n ge 1; req tahoma eq 1; req text_px ge 50; req exit eq 0 ;;
+    d4) word winemine; req frames ge 2; req board_opened eq 1; req refused eq 0; req fb eq ok
+        # From the host reference run (tools/test_wine_ps5_driver.sh --click 80,153 winemine): winemine at 0,0 of
+        # the 800x600 desktop (centred at 560,240); its smiley's yellow at 80,58 and the clicked middle cell's
+        # inside at 74,150, opened (0,0,0; closed it is 0,128,0).
+        HAS_PIXEL=1; PIXELS=("640,298=255,255,0" "634,390=0,0,0") ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
        HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;

@@ -117,6 +117,9 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   (libkernel first): import those from ntdll as `__wrap_` names. A PT_LOAD
   that starts mid-page is ENOEXEC (`--no-rosegment`, 16 KiB pages). Each PRX
   has its own musl: `environ` and `stderr` are per module.
+- `dup` is refused, but passing a descriptor to the process itself with
+  SCM_RIGHTS duplicates it (shared offset and flags): `__wrap_dup` does that
+  (`wine/orbis/pw_wine_dup_orbis.c`); the server's `set_queue_fd` needs it.
 - `realpath()` fails for every path (musl reads `/proc/self/fd/N` with
   `readlink`, an ENOSYS stub): the cwd emulation's lexical one on Orbis. Every
   module that opens files by Wine's `dosdevices/c:` names links its own cwd

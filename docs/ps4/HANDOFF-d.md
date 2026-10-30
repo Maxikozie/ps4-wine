@@ -4,7 +4,7 @@ Written 2026-10-30. Read `CLAUDE.md`, `HANDOFF-c.md` (how c was reached), then t
 splits d into five sub-steps, riskiest first. Each has its own `PS4WINE dN` line and its own
 `check.sh dN` rule. The milestone's own rule (`check.sh d`) is the last of them. **d1 passed on
 its first launch (2026-10-30 14:45); d2 and d3 passed together on the fifth d2 launch
-(15:29); d4 is next.**
+(15:29); d4 passed on its second launch (15:52); d5 is next.**
 
 ## Cleanup after c (done 2026-10-30, fork branch `orbis`, uncommitted)
 
@@ -317,21 +317,49 @@ PS4WINE d3 fonts n=<families> tahoma= text_px= exit= ft_bound= ft_first= ft_init
 
 ### d4: winemine on screen, scripted click, framebuffer pixels
 
-**Host:**
-- The driver-sink fixture runs `winemine.exe`.
-- A scripted click at a known cell (relative deltas from the centre) opens the board.
-- The reference PPMs give two board pixels, mapped through `pw_present_scale_placement` (800×600
-  desktop centred in 1080p). They become d4's pixel rules, written into this file and
-  `MILESTONES.md` before the run.
+**PASSED 2026-10-30 15:52** (second d4 launch): `PS4WINE d4 winemine frames=15
+board_opened=1 refused=0 fb=ok ...` with the framebuffer pixels.
 
-**Console:**
-- The title starts `winemine.exe`.
-- It posts the same click through `pw_wine_post_input` after frame 120.
-- It sets `board_opened` from frame hashes before and after the click.
-- It writes `shot.raw` 60 frames after the click.
+**The host reference** (`tools/test_wine_ps5_driver.sh`, new in the fork).
+- **The host Wine with the driver.** `.deps/wine-host-drv/build` is a copy of the host build tree
+  with only win32u rebuilt `-DWINE_PS5_USER_DRIVER`. The headless host Wine has no Vulkan, and
+  `vulkan.c` calls `ps5drv_vulkan_cursor`, which `ps5drv.c` defines only with `SONAME_LIBVULKAN`,
+  so the copy links a one-line stub (`.deps/wine-host-drv/ps5drv_vulkan_stub.c`, host-only).
+- **The prefix.** The script makes it with the plain host Wine: under the driver build, wineboot's
+  `rundll32 InstallHinfSection` never returns.
+- **Fixture fixes** (`tests/wine_ps5_driver_sink.c`):
+  - motion is relative since patch 0670, so a point is reached as a move to the corner
+    (−100000,−100000, clipped by the server) plus a move by its coordinates;
+  - the frame that makes scripted input due wakes the driver's pipe, because `ProcessEvents` drains
+    it and waits.
+- **Result:** winemine sits at 0,0 of the 800×600 desktop, its 9×9 board's 16 px cells starting at
+  8,81. A click at 80,153 opens the middle cell: its pixel 74,150 goes 0,128,0 → 0,0,0. The smiley
+  is yellow at 80,58.
 
-**Line:** `PS4WINE d4 winemine frames=N board_opened=0|1 refused=N fb=ok`
-- **Rule:** `frames>=600`, `board_opened=1`, `refused=0`, `fb=ok`, plus the `--fb` pixels.
+**The console** (plan `d4`, the title's default):
+- `display`, then `winemine` (`C:\windows\system32\winemine.exe`).
+- A script thread waits for the first drawn frame plus 3 s, posts the host's click through ntdll's
+  `pw_wine_post_input`, and sets `board_opened` from the probe pixel's change. A whole-frame change
+  would count the pointer's own motion.
+- winemine does not exit, so the thread ends the Wine stage itself: the last drawn frame is saved
+  and the line is emitted.
+
+**Rule:** `frames>=2 board_opened=1 refused=0 fb=ok`, plus `--fb` 640,298 = 255,255,0 and
+634,390 = 0,0,0.
+- **Changed before the first d4 run:** the planned `frames>=600` assumed continuous frames, but
+  the driver presents on changes only (d2).
+
+**Launches:**
+1. **First:** the layout matched (probe 0,128,0 at the predicted place, with fonts on the console),
+   but the click never arrived.
+   - Cause: `server/queue.c` `set_queue_fd` `dup()`s the driver's input pipe. `dup` is refused on
+     the console, and the reopen-by-path fallback has no path for a pipe.
+   - Fix: `__wrap_dup` duplicates any descriptor by passing it to the process with SCM_RIGHTS
+     (`wine/orbis/pw_wine_dup_orbis.c`, host-tested). This also answers c's open `dup_fd_object`
+     question; reopen-by-path stays as the last resort.
+2. **Second:** pass.
+
+**Open:** the last frame's smiley is winemine's pressed face, not the smile (no mine shown).
 
 ### d5: the DS4 drives the pointer, which is milestone d itself
 
