@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d5|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -27,7 +27,7 @@ Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 2
              d4 640,298 = 255,255,0 (winemine's smiley) and 634,390 = 0,0,0 (the clicked cell, opened).
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
 and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
-scripted click; d5 is not implemented yet (exit 2).
+scripted click; d5 is milestone d's own rule (check.sh d: the DS4 play after d4's click).
 USAGE
 }
 
@@ -45,9 +45,8 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|d5|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
-case "$MS" in d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -97,7 +96,9 @@ case "$MS" in
        HAS_PIXEL=1; PIXELS=("960,540=${CHECK_B_RGB:-0,255,0}" "240,135=255,128,0") ;;
     c) word hello.exe; req server eq inprocess; req exit eq 0
        [[ "$LINE" == *'stdout="Hello from PE64"'* ]] || FAILS+=("stdout mismatch") ;;
-    d) word winemine; req frames ge 600; req inputs ge 10; req refused eq 0; req board_opened eq 1 ;;
+    d) word winemine; req frames ge 600; req inputs ge 10; req refused eq 0; req board_opened eq 1; req fb eq ok
+       # d4's pixels (the readback is kept right after the title's scripted click, before the DS4 play).
+       HAS_PIXEL=1; PIXELS=("640,298=255,255,0" "634,390=0,0,0") ;;
     d1) req bind in import,thunk; req videoout eq ok; req fb eq ok; req hello eq ok
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
     d2) word gdi; req win32u eq ok; req pixel eq ff8000; req exit eq 0

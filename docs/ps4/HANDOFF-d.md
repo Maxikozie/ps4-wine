@@ -4,7 +4,10 @@ Written 2026-10-30. Read `CLAUDE.md`, `HANDOFF-c.md` (how c was reached), then t
 splits d into five sub-steps, riskiest first. Each has its own `PS4WINE dN` line and its own
 `check.sh dN` rule. The milestone's own rule (`check.sh d`) is the last of them. **d1 passed on
 its first launch (2026-10-30 14:45); d2 and d3 passed together on the fifth d2 launch
-(15:29); d4 passed on its second launch (15:52); d5 is next.**
+(15:29); d4 passed on its second launch (15:52); d5, milestone d itself, passed by its rule
+on its third launch (16:05) with input latency the user found far too high, and again at 16:10
+after the present fix, "super smooth" (8 ms input to frame on average). Milestone d is done; e is
+next.**
 
 ## Cleanup after c (done 2026-10-30, fork branch `orbis`, uncommitted)
 
@@ -363,15 +366,39 @@ board_opened=1 refused=0 fb=ok ...` with the framebuffer pixels.
 
 ### d5: the DS4 drives the pointer, which is milestone d itself
 
-- `pw_pad_orbis.c` read loop.
-- Bindings from `native/pw_wine_display.c`: `pw_wine_pointer_step` maps the left stick to relative
-  `MOUSE_MOVE`, and `pw_wine_game_inputs` maps cross to the left button and circle to the right.
-- Host tests under `-DPW_PAD_ORBIS_HOST_TEST`.
-- The user plays winemine for about a minute.
+**PASSED BY ITS RULE 2026-10-30 16:05** (third d launch): `PS4WINE d winemine frames=693
+inputs=156 refused=0 board_opened=1 fb=ok ...` with d4's framebuffer pixels. The user played for
+the full 150 s, and the end frame shows a large opened area.
 
-**Line:** the milestone line `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1`
-(`refused` = input events the sink queue dropped), plus `fb=ok`. `check.sh d --fb` adds d4's
-pixel rules.
+**Not good enough to play.** The user's words: "it moves but VERRYYY delayed ... very slow input
+latency". Measured: about 113 pad reads/s, 156 events in 150 s, about 4.6 presents/s. Where the
+delay sits is not measured yet.
+
+**Plan `d`** (the title's default):
+- d4's click first, which gives `board_opened` and the readback kept right after it.
+- Then the pad loop on the same thread, an 8 ms poll:
+  - the left stick through `pw_wine_pointer_step` (`native/pw_wine_display.c`: dead zone 20,
+    squared curve, at most 600 px/s), as relative `MOUSE_MOVE`s;
+  - cross is the left button, circle the right;
+  - OPTIONS ends the session, and so do 150 s (the Wine stage's watchdog is 180 s).
+- A record each second (`PW_MS step d play`), so that a session closed from the PS menu still
+  leaves its numbers. The first launch was closed that way and lost them.
+- The last frame is kept as `shot-end.raw` (`fbshot.sh --remote /data/ps4-wine/shot-end.raw`).
+
+**Fixed 16:10** (PASS again: `frames=2257 inputs=2073 refused=0 board_opened=1 fb=ok lat_avg_ms=8
+lat_max_ms=510 present_ms=15.0`; the user: "super smooth").
+- The lag was the title's own present: it cleared the whole 1080p buffer and copied 8 MB for
+  every frame on the Jaguar. Now the border is cleared once per buffer and frame size, and the
+  800×600 source frame is kept; the readback is built from it when saved.
+- The line and the per-second records carry `lat_avg_ms` and `lat_max_ms` (the first pad event
+  not yet shown, to the next present) and `present_ms`.
+
+**Open:**
+- One 510 ms latency spike in 150 s, cause unknown.
+- The first seconds after the scripted click ignored the stick: `d4_click` settled 2 s and wrote
+  the 8 MB readback on the play thread. Now it saves on its own thread and the pad loop starts at
+  once (built, not yet run).
+- OPTIONS ending a session is untested; both sessions ended by time.
 
 ## Tooling the sub-steps need
 

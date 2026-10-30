@@ -14,7 +14,8 @@ a VideoOut hang, no binding method, stage records only (NOLOG naming the stages)
 d3 on tests/fixtures/d2-*.log (one gdi64.exe launch gives both lines) with a generated dump of
 gdi64.exe's window on the centred 800x600 desktop: a pass, no fonts (d2 passes, d3 fails), a fault in
 the program, stage records only. d4 on tests/fixtures/d4-*.log with a generated board (cell open,
-cell closed) and a launch whose click opened nothing. d5 must exit 2 (rule not implemented). The FTP fetch is not
+cell closed) and a launch whose click opened nothing. d (the milestone, d5) on tests/fixtures/d-*.log:
+a pass, too few frames, no pad. The FTP fetch is not
 tested here.
 Exit 0 when every case matches.
 USAGE
@@ -94,7 +95,9 @@ case_ d2 d2-stagesonly.log 1 NOLOG "stage records: w32u_bind,ft_bind,display" --
 case_ d4 d4-pass.log       0 "PASS (framebuffer)" "board_opened=1" --fb --shot "$TMP/mine-open.png"
 case_ d4 d4-pass.log       1 FAIL  "pixel 634,390" --fb --shot "$TMP/mine-closed.png"
 case_ d4 d4-closed.log     1 FAIL  "board_opened=0 != 1" --no-shot
-case_ d5 d1-pass.log 2 "" "" --no-shot
+case_ d  d-pass.log        0 "PASS (framebuffer)" "inputs=240" --fb --shot "$TMP/mine-open.png"
+case_ d  d-few.log         1 FAIL  "frames=310 < 600" --no-shot
+case_ d  d-nopad.log       1 FAIL  "inputs=0 < 10" --no-shot
 
 if [ "$fails" -ne 0 ]; then echo "check_d_test: $fails failure(s)"; exit 1; fi
 echo "check_d_test: all passed"

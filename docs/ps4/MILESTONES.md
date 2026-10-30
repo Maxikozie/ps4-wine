@@ -98,7 +98,7 @@ riskiest first, each with its own `check.sh` rule (details and line formats in
 | d4 | winemine on screen, scripted click opens the board | `PS4WINE d4 winemine frames>=2 board_opened=1 refused=0 fb=ok` and `--fb` 640,298 = 255,255,0, 634,390 = 0,0,0 from the host reference run (`frames>=600` replaced before the first d4 run: frames come on changes only) |
 | d5 | DS4 drives pointer and buttons: milestone d's own line | the d rule above |
 
-d1 passed 2026-10-30 14:45 (first launch); d2 and d3 passed 2026-10-30 15:29 (one launch, the fifth); d4 passed 2026-10-30 15:52 (second launch). The d3 rule was settled before its first run as `n>=1 tahoma=1 text_px>=50 exit=0` (`HANDOFF-d.md`).
+d1 passed 2026-10-30 14:45 (first launch); d2 and d3 passed 2026-10-30 15:29 (one launch, the fifth); d4 passed 2026-10-30 15:52 (second launch); d (d5) passed by its rule 2026-10-30 16:05 with input latency the user called far too high, and again at 16:10 after the present fix (8 ms average input to frame, "super smooth"). **Milestone d passed.** The d3 rule was settled before its first run as `n>=1 tahoma=1 text_px>=50 exit=0` (`HANDOFF-d.md`).
 
 **e.** The title releases VideoOut when Wine creates its first surface. The
 sample must present at 1920×1080 (the one size known to be accepted) before

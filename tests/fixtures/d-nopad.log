@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first d5 launch (format of logs.sh: HH:MM:SS N|K text)
+16:11:15 N PS4WINE d winemine frames=1450 inputs=0 refused=0 board_opened=1 fb=ok drawn=1450 pad=ok pad_reads=7000 end=options probe_before=008000 probe_after=000000 exit=running display=ok build=abc1234+dirty stages=2/2 stopped=- launches=1 resumed=- session_s=75
