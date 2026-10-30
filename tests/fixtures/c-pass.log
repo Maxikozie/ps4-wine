@@ -1,12 +1,12 @@
-02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
-02:10:01 N HELLO ps5log/1 title=PSWN00001 app=ps4-wine-wine64 boot=0x1 tag=orbis
-02:10:01 N 1\t1234\tINFO\tPW_WINE64 start build=abc1234 argc=1 argv0= netlog=192.168.8.100:18194
-02:10:01 N 1\t1234\tINFO\tPW_WINE64 pipe rc=0 errno=0 roundtrip=1
-02:10:01 N 1\t1234\tINFO\tPW_WINE64 load status=0 stage=5 module=0x80000003 segments=3 module_start=0 adopted=1 stats=1
-02:10:02 N 1\t1234\tINFO\tWINE wine startup: server_init_process
-02:10:02 N 1\t1234\tINFO\tWINE wine startup: server connected
-02:10:03 N 1\t1234\tINFO\tSTDOUT Hello from PE64
-02:10:03 N 1\t1234\tINFO\tPW_WINE64 exit status=0 kind=exit
-02:10:03 K <118>[Syscore App] PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234 load=0 stage=6 kind=exit session_s=2
-02:10:03 N PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234 load=0 stage=6 kind=exit session_s=2
-02:10:03 K <118>[Syscore App] PS4WINE idle after exit
+04:25:45 N 1	688650541	INFO	PW_WINE64 start build=0e7b6b4+dirty argc=1 argv0= netlog=192.168.8.116:18194
+04:25:45 N 19	706707680	INFO	PW_WINE64 load status=0 stage=6 module=0x82 segments=3 module_start=0 adopted=1 stats=1
+04:25:45 N 39	807017656	INFO	WINE wine startup: server_init_process
+04:25:45 N 71	1008151008	INFO	WINE wine startup: server connected
+04:25:46 K PS4WINE start build=0e7b6b4+dirty
+04:25:46 N 241	1511192281	INFO	STDOUT Hello from PE64
+04:25:46 N 242	1511203632	INFO	WINESERVER wineserver: orbis: thread 0024 killed (exit code 0, violent 0, last request 7)
+04:25:46 N PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=0e7b6b4+dirty load=0 stage=9 kind=exit session_s=1
+04:25:46 N 243	1643970599	INFO	PW_WINE64 exit status=0 kind=exit
+04:25:46 N 244	1643990106	INFO	PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=0e7b6b4+dirty load=0 stage=9 kind=exit session_s=1
+04:25:46 N 245	1644002186	INFO	PW_WINE64 session_end reason=wine-exit
+04:25:46 N BYE seq=245 reason=wine-exit

@@ -113,6 +113,12 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
 - `libc.a` has a 16-bit `wchar_t` (`wmem*` wrong for 4 bytes), `secure_getenv`
   returns NULL. klog (`sceKernelDebugOutText`) costs 8–15 ms a line and blocks
   when nothing drains it: netlog for volume, klog for startup and fatal lines.
+- `libc.a` is musl with the syscall layer replaced: 134 of its functions only set
+  ENOSYS (`epoll_*`, `ppoll`, `fchdir`, `readlink`, `symlink`, `link`, the `*at`
+  family, `umask`, `uname`, `times`, `setsid`, `sched_*affinity`, `getrandom`, xattr;
+  the fork's `tools/orbis_libc_stubs.py` lists them). Configure's link tests take
+  them for real, so `build_wine_orbis.sh` declares every one Wine checks for absent
+  and fails when a `HAVE_*` names one. libkernel has `kqueue`/`kevent`/`poll`, no epoll.
 - Vulkan (RADV, "PlayStation 4 Liverpool", GFX7, Vulkan 1.3): a submission
   must fit 2 MiB (524288 dwords) or the GPU hangs; `VK_EXT_conditional_rendering`
   and `VK_KHR_draw_indirect_count` hang the GPU; about one submit in 1200

@@ -68,11 +68,18 @@ hook. The title emits exactly one `PS4WINE c` line (the hook's, the fault
 handler's `exit=fault`, or the 180 s watchdog's `exit=timeout`); its other klog
 lines carry no milestone letter. Runtime and prefix live on `/data`
 (`runtime.sh`, `prefix.sh`), the package carries the title alone.
-State after ten runs (2026-10-30, `docs/ps4/HANDOFF-c.md`): everything up to
-the in-process server's client handshake works on the console; the blocker is
-ntdll waiting in `wine_server_receive_fd` for the server thread (built on the
-kqueue path) to hand over the request descriptor. Patches 1030 and 1040 are
-diagnostic (report and continue) and come out once their causes are fixed.
+**Passed 2026-10-30 04:26, run 15** (`docs/ps4/LOG.md`, `docs/ps4/HANDOFF-c.md`).
+What the fifteen runs taught, in order: the PRX recipe and page-aligned
+segments; per-PRX musl state (`environ`, `stderr`, `exit`); no unix ownership
+under `/data`; path `stat` without dev/ino; `dup` refused everywhere; the SDK's
+`libc.a` ENOSYS stubs taken for real by configure (`epoll_create` put the
+server's loop on `epoll_create()` = -1 for ten runs); `fcntl(F_SETFL,
+O_NONBLOCK)` and `FIONBIO` refused on AF_UNIX sockets but fine on kernel pipes
+(Wine's pipes are kernel pipes on Orbis now); musl's `getauxval` faulting on a
+NULL aux vector; and a prefix that must keep its system32/syswow64 files.
+Patches 1030/1040 (report and continue) and 1050/1060/1070 (handshake and
+request traces, O_NONBLOCK tolerance) are diagnostic and come out at the start
+of d, keeping only what a fix still needs.
 
 **d.** The host fixture `tests/wine_ps5_driver_sink.c` in prospero-win proves
 the driver path on a PC first (winemine frames as PPM, scripted click).

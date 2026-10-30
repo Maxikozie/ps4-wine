@@ -3,7 +3,7 @@
 # process creation) with the fork's host Wine, trim it, add hello.exe, and upload it to the
 # console's /data/ps4-wine/prefix over FTP.
 # From: prospero-win tools/pw_prefix.py @ 0e7b6b4 (LGPL-2.1-or-later): what is stripped from a
-# prefix before the upload (dosdevices, the builtin DLL copies) and the size verification.
+# prefix before the upload (dosdevices) and the size verification.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -13,9 +13,10 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--dest DIR] [--dry-run]
 
   --make     WINEPREFIX=build/prefix WINEARCH=wow64 wineboot --init with the host Wine
              (third_party/prospero-win/.deps/wine-host), then: remove dosdevices (Wine recreates
-             it on the console; a title cannot make symlinks), drop the builtin DLL copies under
-             drive_c/windows/{system32,syswow64} (the runtime's PE modules serve them), build
-             tests/wine_hello64.c with x86_64-w64-mingw32-gcc into drive_c/hello.exe
+             it on the console; a title cannot make symlinks), keep the DLL/EXE files under
+             drive_c/windows/{system32,syswow64} (the PE loader maps a builtin only when its
+             file is there), build tests/wine_hello64.c with x86_64-w64-mingw32-gcc into
+             drive_c/hello.exe
   --upload   mirror build/prefix to \$PS4_HOST:$PS4_DATA_ROOT/prefix with lftp, verify sizes
   (no option: both)
 USAGE
@@ -48,10 +49,9 @@ if [ "$MAKE" = 1 ]; then
     [ -f "$PREFIX/system.reg" ] || die "wineboot left no system.reg"
     # A title cannot create symlinks: dosdevices goes (Wine recreates it from the registry).
     rm -rf "$PREFIX/dosdevices"
-    # The builtin DLL copies are the host Wine's PE modules again: the runtime serves them.
-    for d in system32 syswow64; do
-        find "$PREFIX/drive_c/windows/$d" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) -delete 2>/dev/null || true
-    done
+    # The DLL and EXE files wineboot puts in system32/syswow64 stay: Wine's PE loader maps a
+    # builtin only when its file exists there (outside prefix bootstrap mode), so without them
+    # the first load fails with "could not load kernel32.dll, status c0000135" (console run 14).
     x86_64-w64-mingw32-gcc -O1 -o "$PREFIX/drive_c/hello.exe" "$HELLO_SRC"
     find "$PREFIX" -type l -delete   # no symlinks reach the console
     log "prefix: $(find "$PREFIX" -type f | wc -l) files, $(du -sh "$PREFIX" | cut -f1); hello.exe $(stat -c %s "$PREFIX/drive_c/hello.exe") bytes"
@@ -64,7 +64,11 @@ if [ "$UPLOAD" = 1 ]; then
 open ftp://$PS4_HOST:$PS4_FTP_PORT;
 mkdir -pf '$DEST';
 mirror -R --no-perms --parallel=4 --only-newer --ignore-time '$PREFIX' '$DEST';
+put -O '$DEST' '$PREFIX/system.reg'; put -O '$DEST' '$PREFIX/user.reg';
+put -O '$DEST' '$PREFIX/userdef.reg'; put -O '$DEST' '$PREFIX/.update-timestamp';
 quit"
+    # The registry files are put explicitly: the console's Wine rewrites them, and mirror's
+    # newer-than test (which trusts the console's clock) left a changed user.reg in place once.
     if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$CMDS"; exit 0; fi
     log "uploading to ftp://$PS4_HOST:$PS4_FTP_PORT$DEST"
     lftp -c "$CMDS" >&2
