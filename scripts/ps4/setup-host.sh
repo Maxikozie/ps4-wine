@@ -20,7 +20,10 @@ OPENSSL11_VER=1.1.1w
 OPENSSL11_SHA256=cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8
 APT_PKGS=(clang-18 lld-18 llvm-18 cmake ninja-build meson bison flex pkg-config
           mingw-w64 glslang-tools python3-mako python3-yaml python3-packaging
-          lftp shellcheck ffmpeg v4l-utils curl netcat-openbsd git gh)
+          lftp shellcheck ffmpeg v4l-utils curl netcat-openbsd git gh
+          # host Wine (milestone c on): headless is enough for prefixes and console
+          # programs; X11 and FreeType make the PC's Wine show installers (milestone h)
+          libx11-dev libxext-dev libfreetype-dev libgnutls28-dev)
 
 usage() {
     cat <<USAGE

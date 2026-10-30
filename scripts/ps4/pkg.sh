@@ -52,7 +52,7 @@ done
 NAME="${NAME:-$(basename "${ELF%.*}")}"
 CID="${CID:-IV0000-${TID}_00-$(printf '%-16s' "${NAME^^}" | tr ' ' '0' | tr -c 'A-Z0-9' '0' | cut -c1-16)}"
 STAGE="${STAGE:-$BUILD_DIR/pkg/$NAME}"
-BID="$(build_id)"
+BID="${BUILD_ID_OVERRIDE:-$(build_id)}"   # a title built from the fork carries the fork's id (build.sh title)
 PKG_BASENAME="$NAME-$BID"
 
 CREATE_FSELF="$(oo_tool create-fself || true)"

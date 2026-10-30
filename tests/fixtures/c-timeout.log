@@ -1,0 +1,4 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:02 N 1\t1234\tINFO\tWINE wine startup: server connected
+02:13:01 N 1\t1234\tINFO\tPW_WINE64 watchdog: no exit after 180 s
+02:13:01 K <118>[Syscore App] PS4WINE c hello.exe stdout="" server=inprocess exit=timeout build=abc1234 load=0 stage=6 kind=watchdog session_s=180

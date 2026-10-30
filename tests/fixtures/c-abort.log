@@ -1,0 +1,4 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:02 N 1\t1234\tINFO\tWINE wine startup: server connected
+02:10:02 N 1\t1234\tINFO\tWINESERVER Assertion failed: x (server/fd.c: 12)
+02:10:03 K <118>[Syscore App] PS4WINE c hello.exe stdout="" server=inprocess exit=abort build=abc1234 load=0 stage=6 kind=abort session_s=2

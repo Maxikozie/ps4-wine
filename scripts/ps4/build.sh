@@ -18,9 +18,14 @@ usage: scripts/ps4/build.sh --check-toolchain
   probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh a and b
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
-  wine               Wine PE side (host) + Orbis PRX side via the fork  (milestone c)
-  title              the ps4-wine title (native/orbis in the fork)      (milestone c)
+  wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
+                     the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
+                     Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
+  title              the ps4-wine title: the fork's native/orbis -> build/title/eboot.elf
+                     -> dist/ps4-wine-<id>.pkg (title $TITLE_ID; the runtime is uploaded
+                     separately by scripts/ps4/runtime.sh)                               (milestone c)
   all                wine + title
+  Options after the target: --jobs N (wine), --skip-host (wine: the Orbis side only)
 USAGE
 }
 
@@ -255,6 +260,7 @@ probe_test() {
     "$out/triangle_caps_test"
     "$REPO_ROOT/tests/check_a_test.sh"
     "$REPO_ROOT/tests/check_b_test.sh"
+    "$REPO_ROOT/tests/check_c_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -308,6 +314,53 @@ build_triangle() {
     "$SCRIPT_DIR/pkg.sh" --elf "$out/triangle.elf" --name triangle --title-id "$TRIANGLE_TITLE_ID" --title "$TRIANGLE_TITLE_NAME"
 }
 
+# The fork's scripts take the toolchain and orbis-compat from the environment.
+fork_env() {
+    [ -d "$PROSPERO_WIN_DIR/.git" ] || [ -f "$PROSPERO_WIN_DIR/.git" ] ||
+        die "no fork at $PROSPERO_WIN_DIR: git submodule update --init third_party/prospero-win"
+    [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
+    export OO_PS4_TOOLCHAIN ORBIS_COMPAT="$ORBIS_COMPAT_STAGE" LLVM_BIN
+}
+
+# Host Wine (the fork's build_wine_runtime.sh + build_host_wine.sh, headless unless the X11 and
+# FreeType development packages are installed), then the Orbis Unix side (build_wine_orbis.sh).
+build_wine() {
+    local jobs="${JOBS:-$(nproc)}" skip_host=0 extra="" a
+    for a in "$@"; do case "$a" in --jobs) ;; --skip-host) skip_host=1 ;; [0-9]*) jobs="$a" ;; *) die "build wine: unknown option $a" ;; esac; done
+    fork_env
+    if [ "$skip_host" = 0 ]; then
+        dpkg -s libx11-dev >/dev/null 2>&1 || extra="$extra --without-x"
+        dpkg -s libfreetype-dev >/dev/null 2>&1 || extra="$extra --without-freetype"
+        [ -z "$extra" ] || log "host wine: headless build (missing packages; setup-host.sh --check-apt):$extra"
+        log "wine: host tools tree (Wine 490f6d5, .deps/wine)"
+        (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="${extra# }" tools/build_wine_runtime.sh --jobs "$jobs" > "$BUILD_DIR/wine-runtime.out" 2>&1) ||
+            die "build_wine_runtime.sh failed; see $BUILD_DIR/wine-runtime.out"
+        log "wine: host Wine with the series (.deps/wine-host)"
+        (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="${extra# }" tools/build_host_wine.sh --jobs "$jobs" > "$BUILD_DIR/wine-host.out" 2>&1) ||
+            die "build_host_wine.sh failed; see $BUILD_DIR/wine-host.out"
+        tail -n1 "$BUILD_DIR/wine-host.out" >&2
+    fi
+    log "wine: Orbis Unix side (.deps/wine-orbis)"
+    (cd "$PROSPERO_WIN_DIR" && tools/build_wine_orbis.sh --jobs "$jobs" 2>&1 | tee "$BUILD_DIR/wine-orbis.out" >&2) ||
+        die "build_wine_orbis.sh failed; see $BUILD_DIR/wine-orbis.out and .deps/wine-orbis/report.json"
+}
+
+# The title: the fork's build_native_orbis.sh -> build/title/eboot.elf -> dist/ps4-wine-<id>.pkg.
+build_title() {
+    local out="$BUILD_DIR/title" bid elf
+    fork_env
+    [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
+    bid="$(build_id "$PROSPERO_WIN_DIR")"
+    log "title: fork build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
+    (cd "$PROSPERO_WIN_DIR" && tools/build_native_orbis.sh --out "$out" --build-id "$bid"         --netlog-host "$PS4_NETLOG_HOST" --netlog-port "$PS4_NETLOG_PORT" --data-root "$PS4_DATA_ROOT" >&2)
+    elf="$out/eboot.elf"
+    [ -f "$elf" ] || die "no $elf"
+    log "title: ELF $(stat -c %s "$elf") bytes, needs: $(llvm-readelf -d "$elf" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
+    # The probe module rides in the package (loaded from the runtime directory on /data too).
+    mkdir -p "$out/assets"; cp "$out/pw_probe_mod.prx" "$out/pw_probe_tls.prx" "$out/assets/"
+    BUILD_ID_OVERRIDE="$bid" "$SCRIPT_DIR/pkg.sh" --elf "$elf" --name ps4-wine --title-id "$TITLE_ID" --title "$TITLE_NAME"         --content-id "$CONTENT_ID" --assets "$out/assets"
+}
+
 stub() { # stub <target> <milestone> <lines...>
     local target="$1" ms="$2"; shift 2
     log "build $target: not implemented until milestone $ms. Intended steps:"
@@ -324,14 +377,8 @@ case "$1" in
     probe) build_probe ;;
     probe-test) probe_test ;;
     triangle) build_triangle ;;
-    wine) stub wine c \
-        "git submodule update --init third_party/prospero-win   (fork, branch orbis)" \
-        "third_party/prospero-win/tools/build_host_wine.sh        # PE modules, winebuild, widl" \
-        "third_party/prospero-win/tools/build_wine_orbis.sh       # Unix side + PRXs with OpenOrbis clang + orbis-compat" \
-        "third_party/prospero-win/tools/build_wowprospero.sh      # 32-bit CPU (milestone f)" ;;
-    title) stub title c \
-        "third_party/prospero-win/tools/build_native_orbis.sh     # eboot.elf from native/orbis" \
-        "scripts/ps4/pkg.sh --elf <eboot.elf> --assets <staged win/wine runtime>" ;;
-    all) stub all c "build.sh wine && build.sh title" ;;
+    wine) shift; build_wine "$@" ;;
+    title) build_title ;;
+    all) build_wine; build_title ;;
     *) usage; exit 1 ;;
 esac

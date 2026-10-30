@@ -1,0 +1,4 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 load status=0 stage=5 module=0x80000003 segments=3 module_start=0 adopted=1 stats=1
+02:10:02 N 1\t1234\tINFO\tPW_WINE64 fault signal=11 addr=0x10 rip=0x80001234 ntdll_segment=0 offset=0x1234
+02:10:02 K <118>[Syscore App] PS4WINE fault signal=11 rip=0x80001234 segment=0 offset=0x1234

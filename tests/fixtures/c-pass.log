@@ -1,0 +1,12 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:01 N HELLO ps5log/1 title=PSWN00001 app=ps4-wine-wine64 boot=0x1 tag=orbis
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 start build=abc1234 argc=1 argv0= netlog=192.168.8.100:18194
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 pipe rc=0 errno=0 roundtrip=1
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 load status=0 stage=5 module=0x80000003 segments=3 module_start=0 adopted=1 stats=1
+02:10:02 N 1\t1234\tINFO\tWINE wine startup: server_init_process
+02:10:02 N 1\t1234\tINFO\tWINE wine startup: server connected
+02:10:03 N 1\t1234\tINFO\tSTDOUT Hello from PE64
+02:10:03 N 1\t1234\tINFO\tPW_WINE64 exit status=0 kind=exit
+02:10:03 K <118>[Syscore App] PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234 load=0 stage=6 kind=exit session_s=2
+02:10:03 N PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234 load=0 stage=6 kind=exit session_s=2
+02:10:03 K <118>[Syscore App] PS4WINE idle after exit

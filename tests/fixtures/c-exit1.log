@@ -1,0 +1,4 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:02 N 1\t1234\tINFO\tWINE wine startup: server connected
+02:10:03 N 1\t1234\tINFO\tSTDOUT Hello from PE64
+02:10:03 K <118>[Syscore App] PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=1 build=abc1234 load=0 stage=6 kind=exit session_s=2

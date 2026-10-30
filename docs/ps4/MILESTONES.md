@@ -47,11 +47,32 @@ copies the presented swapchain image back and writes it to `/data/ps4-wine/shot.
 VideoOut's A8B8G8R8 scan-out order, `fb=ok` in its line); `scripts/ps4/fbshot.sh` fetches and
 converts it. That checks what the GPU rendered into the scan-out memory, not what leaves the HDMI port.
 
-**c.** Everything in the a-probe that returned a value becomes a constant in
-the Orbis patches (1000–1499). First console run with Wine: expect to iterate
-on `report.json` unresolved imports, raw syscalls in the shims and the
-in-process server's `pipe()`/`fchdir` gaps, as prospero-win's bring-up log in
-`WINE_PS5_BUILD.md` "Console bring-up" shows (runs 2–12).
+**c.** Everything in the a-probe that returned a value is a constant in the
+fork: the signal frame and selectors in `wine/orbis/include` (0500/0501/0590
+carry over unchanged), the direct-memory calls in `pw_wine_dmem_ps5.c`'s
+`__ORBIS__` branch. First console run with Wine: expect to iterate on
+`report.json` unresolved imports, raw syscalls in the shims and the in-process
+server's `pipe()`/`fchdir` gaps, as prospero-win's bring-up log in
+`WINE_PS5_BUILD.md` "Console bring-up" shows (runs 2–12). One build answers
+several hypotheses at once, each as a `PW_WINE64` record: the PRX recipe
+(`-pie --export-dynamic -e module_start` + `link.x`, no `crtlib.o`: `probe_mod`
+loads, its constructor runs when `module_start` is called, `sceKernelDlsym`
+sees its export), `pipe()` on this kernel, `dup2` onto fd 1/2, `sigaction` with
+FreeBSD flags delivering to Wine's handlers with no alternate stack
+(`sigaltstack` returned -1 in a), `socketpair` + `SCM_RIGHTS` for the in-process
+server (`WINE_PS5_SERVER_DIRECT=0`, `WINE_PS5_MUTEX_SHARED=0`,
+`WINE_PS5_SYNC_SHARED=0` on the first run: the stock paths only), the direct
+memory self-check and the 16 GiB high area, the PE64 file mapping or its
+`pread` fallback, and `STDOUT Hello from PE64` with `exit=0` through the exit
+hook. The title emits exactly one `PS4WINE c` line (the hook's, the fault
+handler's `exit=fault`, or the 180 s watchdog's `exit=timeout`); its other klog
+lines carry no milestone letter. Runtime and prefix live on `/data`
+(`runtime.sh`, `prefix.sh`), the package carries the title alone.
+State after ten runs (2026-10-30, `docs/ps4/HANDOFF-c.md`): everything up to
+the in-process server's client handshake works on the console; the blocker is
+ntdll waiting in `wine_server_receive_fd` for the server thread (built on the
+kqueue path) to hand over the request descriptor. Patches 1030 and 1040 are
+diagnostic (report and continue) and come out once their causes are fixed.
 
 **d.** The host fixture `tests/wine_ps5_driver_sink.c` in prospero-win proves
 the driver path on a PC first (winemine frames as PPM, scripted click).

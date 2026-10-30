@@ -9,8 +9,8 @@ games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
 rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
-`docs/ps4/LOG.md` (every console run), `docs/ps4/RESEARCH.md` (background).
-`refs/` holds read-only reference checkouts (`THIRD_PARTY.md` lists them).
+`docs/ps4/HANDOFF-c.md` (where milestone c stands), `docs/ps4/LOG.md` (every
+console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkouts.
 
 ## Hard rules
 
@@ -34,13 +34,11 @@ rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
   prospero-win `0e7b6b4`. Bump a pin in its own commit with the reason.
 - **Evidence.** Host tests first; a console build should test several
   hypotheses at once. Every console launch appends exactly one line to
-  `docs/ps4/LOG.md` in its documented format. Say plainly which console
-  behaviour was not tested. Never edit a hash or a threshold to make a check
-  pass.
+  `docs/ps4/LOG.md`. Say plainly which console behaviour was not tested. Never
+  edit a hash or a threshold to make a check pass.
 - **Division of labour.** The user launches apps on the PS4 by hand and plays.
   Claude builds, packages, deploys, reads logs and takes screenshots.
-- **Git.** The user commits. Do not commit or push unless asked. Never touch
-  `refs/`.
+- **Git.** The user commits. Do not commit or push unless asked. Never touch `refs/`.
 
 ## Environment
 
@@ -58,17 +56,22 @@ rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
 | Script | Does |
 |---|---|
 | `setup-host.sh` | prints missing apt packages (never sudo); `--install-toolchain` (OpenOrbis v0.5.4, sha256-pinned); `--install-openssl11` (private OpenSSL 1.1 that PkgTool.Core's `pkg_build` needs) |
-| `build.sh <target>` | `--check-toolchain`; `compat` (orbis-compat → `build/orbis-compat`), `mesa` (mesa-ps4 RADV, no nix, local clone → `build/mesa-ps4`), `probe` (→ `dist/probe-<id>.pkg`), `probe-test` (host tests); later targets fill in per milestone |
+| `build.sh <target>` | `--check-toolchain`; `compat` (orbis-compat → `build/orbis-compat`), `mesa` (mesa-ps4 RADV, no nix, local clone → `build/mesa-ps4`), `probe` (→ `dist/probe-<id>.pkg`), `probe-test` (host tests, incl. `check_a/b/c_test.sh`), `wine` (fork: host Wine + Orbis PRXs, `--skip-host`), `title` (fork `native/orbis` → `dist/ps4-wine-<id>.pkg`) |
 | `pkg.sh --elf X` | ELF → fSELF → `.pkg` in the layout that grants ~4.4 GiB direct memory |
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
 | `shot.sh` | one frame from the capture stick (pinned MJPEG 1920x1080); `--pixel X,Y`, `--expect-rgb` |
 | `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
 | `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
+| `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
+| `prefix.sh` | `wineboot --init` with the fork's host Wine into `build/prefix` (dosdevices and builtin DLL copies removed, `hello.exe` added), upload to `/data/ps4-wine/prefix` |
 
 The loop for one console run: `logs.sh --label X &` (klog has no history, so
 start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /
-`check.sh` → `shot.sh` → one line in `docs/ps4/LOG.md`.
+`check.sh` → `shot.sh` → one line in `docs/ps4/LOG.md`. From milestone c the
+Wine runtime and the prefix live on `/data` (`runtime.sh`, `prefix.sh`), so a
+Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
+`/data/ps4-wine/env.txt` (NAME=VALUE lines) changes Wine's environment per run.
 
 ## PS4 traps (measured by orbis-ports, nx-on-orbis, playden; see ARCHITECTURE.md)
 
@@ -78,37 +81,44 @@ start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /
 - A raw `syscall` instruction outside libkernel kills the process; libc
   `syscall()` returns ENOSYS. Relative `open` is EINVAL, `getcwd` ENOSYS,
   `fchdir` crashes, `openat` takes only `AT_FDCWD`. Use absolute paths.
+  `dup` is EPERM and `fcntl(F_DUPFD)` EINVAL on every fd; `close`/`dup2` on
+  fds 0-2 are EPERM; `pipe`, `socketpair` and `SCM_RIGHTS` fd passing work;
+  `shm_open(SHM_ANON)` works. `sceKernelStat` by path returns dev/ino 0,
+  `_fstat` on a descriptor returns them. Files under `/data` are root's.
 - Default thread stack is 64 KiB (orbis-compat raises it to 2 MiB).
   `timer_create` with SIGEV_THREAD hangs. `sigaltstack` returns -1.
-- Returning from `main()` or calling `exit()` is reported as CE-34878-0: idle
-  forever instead.
+- Returning from `main()` or calling `exit()` (from any module) is reported as
+  CE-34878-0: idle forever instead. Writes to fd 1/2 reach only klog.
 - Executable memory: `sceKernelAllocateDirectMemory` → map RW → `sceKernelMprotect`
   RWX. Asking for EXEC at map time fails. Page granule 16 KiB.
 - Flexible memory (`mmap(MAP_ANON)`, libc malloc) is ~384–440 MiB. Direct
   memory is ~4.4 GiB **only** with the OpenOrbis-samples package layout
   (`sce_module/libc.prx` + `libSceFios2.prx`, `sce_sys/about/right.sprx`,
-  SFO `CATEGORY gd`, `SYSTEM_VER 0`, paid `0x3800000000000011`). Other layouts
-  give 768 MiB or do not boot. Largest `sceKernelReserveVirtualRange`: 16 GiB.
+  SFO `CATEGORY gd`, `SYSTEM_VER 0`, paid `0x3800000000000011`); other layouts
+  give 768 MiB or do not boot. `sceKernelReserveVirtualRange`: 16 GiB anywhere,
+  512 GiB FIXED at `0x1000000000`.
 - Faults come through `sceKernelInstallExceptionHandler` or FreeBSD `sigaction`
-  (FreeBSD flag values and struct layout, not the SDK's): both give the PS5's
-  frame, measured 2026-10-30: mcontext at ucontext+64 (rip +224), FXSAVE +320,
-  FS base +1152, cs64 `0x43`. `sysarch` 128–131 get/set FS and GS; `rdfsbase`
-  is SIGILL. A far jump to selector `0x33` runs 32-bit code and returns.
+  (FreeBSD values and layouts: the fork's `wine/orbis/include`): the PS5's frame,
+  mcontext at ucontext+64 (rip +224), FXSAVE +320, FS base +1152, cs64 `0x43`;
+  `sysarch` 128–131 get/set FS and GS; a far jump to `0x33` runs 32-bit code.
 - `sceSystemServiceLoadExec(path, args)` restarts the title; the new process
-  gets the arguments from `argv[0]` on (no program name). An app PRX loads from
-  `/app0/assets` and `sceKernelDlsym` resolves its exports (link it
-  `--export-dynamic`), but its constructors did not run even with
-  orbis-compat's `crtlib.o` (the SDK's never walks `.init_array`).
-- `libc.a` was built with a 16-bit `wchar_t`: `wmemchr` and friends are wrong
-  for 4-byte `wchar_t`. `secure_getenv` always returns NULL.
-- `sceKernelDebugOutText` (klog) costs 8–15 ms per line and blocks when nothing
-  drains it: netlog for volume, klog for startup and fatal lines only.
+  gets the arguments from `argv[0]` on (no program name). An app PRX (`/app0`
+  or `/data`, mode 777) loads and `sceKernelDlsym` resolves its exports; the
+  loader runs neither its constructors nor `module_start`: link it `-pie
+  --export-dynamic -e module_start` with the SDK's `link.x`, a global
+  `module_start` and a writable module-param block (no crtlib.o), and call
+  `module_start` yourself. A PT_LOAD that starts mid-page is ENOEXEC
+  (`--no-rosegment`, 16 KiB pages). Each PRX has its own musl: `environ` and
+  `stderr` are per module.
+- `libc.a` has a 16-bit `wchar_t` (`wmem*` wrong for 4 bytes), `secure_getenv`
+  returns NULL. klog (`sceKernelDebugOutText`) costs 8–15 ms a line and blocks
+  when nothing drains it: netlog for volume, klog for startup and fatal lines.
 - Vulkan (RADV, "PlayStation 4 Liverpool", GFX7, Vulkan 1.3): a submission
   must fit 2 MiB (524288 dwords) or the GPU hangs; `VK_EXT_conditional_rendering`
   and `VK_KHR_draw_indirect_count` hang the GPU; about one submit in 1200
   stalls; surface formats are RGBA only (BGRA swaps red and blue); arena size
   via `ORBIS_ARENA_MIB`. Vulkan titles link `libvulkan_radeon.a` with
   `--whole-archive` plus the kit's vkloader thunks.
-- Compile with `-march=btver2 -femulated-tls -fno-omit-frame-pointer`. The
-  title's cpuset is `0x3f`: 6 Jaguar cores at 1.59 GHz (Slim, TSC 1594 MHz);
-  pinning to cores 6/7 returns `0x80020001`.
+- Compile with `-march=btver2 -femulated-tls -fno-omit-frame-pointer` (no emutls
+  runtime in the SDK; Wine's Unix side needs none). Cpuset `0x3f`: 6 Jaguar
+  cores at 1.59 GHz (Slim); pinning to cores 6/7 returns `0x80020001`.

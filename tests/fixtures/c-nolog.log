@@ -1,0 +1,4 @@
+02:10:01 K <118>[Syscore App] PS4WINE start build=abc1234
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 start build=abc1234 argc=1 argv0= netlog=192.168.8.100:18194
+02:10:01 N 1\t1234\tINFO\tPW_WINE64 load status=0 stage=5 module=0x80000003 segments=3 module_start=0 adopted=1 stats=1
+02:10:02 N 1\t1234\tINFO\tPW_WINE64 alive t=1 server=0 stage=6 dmem=0 heap=0 heap_dmem=0 vm=0/0
