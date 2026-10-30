@@ -23,7 +23,9 @@ usage: scripts/ps4/check.sh <a|b|c|d|d1..d5|e|f|g|h> [--log FILE] [--shot FILE] 
 Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
                 (orange marker: swapped red and blue fail it); d1 the same two on the title's VideoOut
                 test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
-Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2-d5 are not
+             d2 960,540 = 0,255,0 and 780,410 = 255,128,0 (gdi64.exe's window on the framebuffer).
+Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
+and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4-d5 are not
 implemented yet (exit 2).
 USAGE
 }
@@ -44,7 +46,7 @@ while [ $# -gt 0 ]; do
 done
 case "$MS" in a|b|c|d|d1|d2|d3|d4|d5|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
-case "$MS" in d2|d3|d4|d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
+case "$MS" in d4|d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -61,10 +63,10 @@ LINE="$(grep -E "PS4WINE $MS " "$LOG" | tail -n1 | sed -E 's/^[0-9:]+ [KN] //; s
 emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "$2" "${NOTE:+$NOTE; }$(basename "$LOG")${SHOT:+; $(basename "$SHOT")}"; }
 if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
-    # d1 records each stage as it ends ("PW_D1 stage=<name> ..."): name the ones that arrived.
+    # d1-d3 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [ "$MS" = d1 ]; then
-        STAGES="$(grep -oE 'PW_D1 stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_D1 stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
+    if [[ "$MS" == d[123] ]]; then
+        STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
     if [ -n "$FIRST_ERR" ]; then emit CRASH "$FIRST_ERR$STAGES"; else emit NOLOG "no 'PS4WINE $MS' line in $(basename "$LOG")$STAGES"; fi
@@ -97,6 +99,11 @@ case "$MS" in
     d) word winemine; req frames ge 600; req inputs ge 10; req refused eq 0; req board_opened eq 1 ;;
     d1) req bind in import,thunk; req videoout eq ok; req fb eq ok; req hello eq ok
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
+    d2) word gdi; req win32u eq ok; req pixel eq ff8000; req exit eq 0
+        # gdi64.exe's window: orange 400x300 at 200,150 of the 800x600 desktop, green 200x150 inside at
+        # 100,75; the desktop centred on 1920x1080 at 560,240 (scale 1).
+        HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "780,410=255,128,0") ;;
+    d3) word fonts; req n ge 1; req tahoma eq 1; req text_px ge 50; req exit eq 0 ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
        HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;

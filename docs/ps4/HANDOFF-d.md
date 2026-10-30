@@ -3,7 +3,8 @@
 Written 2026-10-30. Read `CLAUDE.md`, `HANDOFF-c.md` (how c was reached), then this. The plan
 splits d into five sub-steps, riskiest first. Each has its own `PS4WINE dN` line and its own
 `check.sh dN` rule. The milestone's own rule (`check.sh d`) is the last of them. **d1 passed on
-its first launch (2026-10-30 14:45); d2 is next.**
+its first launch (2026-10-30 14:45); d2 and d3 passed together on the fifth d2 launch
+(15:29); d4 is next.**
 
 ## Cleanup after c (done 2026-10-30, fork branch `orbis`, uncommitted)
 
@@ -218,41 +219,101 @@ earlier launch), `hang`, or `-` (not reached). Every stage's full fields are in 
   package's `sce_module/` too and launch again: one more launch, no code change.
 - Last resort: win32u linked statically into ntdll.prx (not built).
 
-### d2: win32u inside Wine, offscreen GDI, the user driver installs
+### d2 + d3: win32u, GDI and fonts from one gdi64.exe launch
 
-**Host first:**
-- A host Wine with `WINE_PS5_USER_DRIVER` and `WINE_INPROCESS_SERVER`, in its own build dir so the
-  prefix's host Wine is untouched.
-- `tools/test_wine_ps5_driver.sh`: the fixture's header names it, but it is not in the fork.
-- `tests/wine_ps5_driver_sink.c` changed to send relative moves. Patch 0670 made type 2 relative,
-  and the pointer starts at the frame centre.
-- New `tests/wine_gdi64.c` (PE64) does `GetSystemMetrics`, a 64×64 DIB section filled orange,
-  `GetPixel`, an `EnumFontFamilies` count, and shows a window for 2 s.
+**PASSED 2026-10-30 15:29** (d2 and d3 in one launch, the fifth; LOG.md has all five):
+`PS4WINE d2 gdi win32u=ok driver=ps5 pixel=ff8000 exit=0 ... fb=ok w32u_bound=95/95` with the
+framebuffer pixels, and `PS4WINE d3 fonts n=9 tahoma=1 text_px=419 exit=0 ... tahoma_mmap=ok:00010000`.
 
-**Console:**
-- ntdll's `dlopen("win32u.so")` takes the d1 binding.
-- The title sends `pw_wine_set_present_sink` frames (BGRA) to `pw_videoout_orbis`, swapping to
-  R,G,B,A in the copy.
-- `runtime.sh` stages `win32u.prx`.
-- `prefix.sh` adds `gdi64.exe` and refuses a `user.reg` with `MenuHeight` (patch 0410).
+**What the five launches taught:**
+1. The window reaches the TV through the present sink (seen by the user).
+2. The user driver presents on changes only (2 frames for a window shown 2 s), so the readback
+   keeps the last drawn frame and saves it at exit.
+3. The title's own `readdir` works, but `NtQueryDirectoryFile` was STATUS_ACCESS_DENIED.
+4. Cause: `realpath()` fails for every path with `libc.a` (musl's open + `readlink` of
+   `/proc/self/fd/N`, and `readlink` is an ENOSYS stub). The in-process server therefore kept no
+   `unix_name` for any file, and patch 0140's enter-by-name had no name to use. The fix is a
+   lexical `realpath` in the cwd emulation on Orbis (`PW_CWD_LEXICAL_REALPATH`, host-tested).
+5. Every module that opens files by Wine's `dosdevices/c:` names needs its own copy of the cwd
+   emulation (the `c:` link is virtual): libfreetype (its `fopen`) and win32u (its `open`/`mmap`
+   of font files), as wineserver already has. `-u opendir` keeps libc.a's `opendir`: the
+   emulation's `__real_opendir` alone made ld.lld take libSceLibcInternal's.
+6. A private read-only `mmap` of a file on `/data` works.
 
-**Line:** `PS4WINE d2 gdi win32u=ok pixel=ff8000 exit=0 driver=ps5 frames=N fonts=N`
-- **Rule:** `win32u=ok`, `pixel=ff8000`, `exit=0`.
-- **Recorded:** `frames` and `fonts` (0 expected before d3).
+**Open:** the `GDI64` stdout line did not arrive over netlog in launches 4 and 5. The plan's
+records carry its fields, but STDOUT forwarding under load is lossy; look at it before d4 relies
+on stdout.
 
-### d3: FreeType and fonts
+**The `dlsym` slot from d1, settled on the host.**
+- create-fself puts libkernel first among an importer's NEEDED libraries. It gives each import to
+  the first library that exports its name.
+- libkernel exports `dlopen`, `dlsym`, `dlclose` and `dlerror`, so win32u's `dlsym` became a
+  libkernel import: 88 entries in the OELF's ntdll library for 89 in the ELF.
+- **Fix:**
+  - win32u is linked `--wrap=dlopen,dlsym,dlclose,dlerror,dladdr`, and ntdll exports the
+    `__wrap_*` forwarders (`wine/orbis/pw_wine_dl_orbis.c`);
+  - `orbis_import_stub.py` refuses a name an SDK stub the importer NEEDs also exports;
+  - `orbis_prx_report.py` compares each OELF's per-library import counts (`sce_imports`) with the
+    ELF's and fails on a difference. It flags the d1 build and passes the new one: win32u 94/94 from
+    ntdll, `__wrap_dlsym` among them.
 
-- FreeType 2.13.3 as `libfreetype.prx` (orbis-clang), exporting the 31 functions win32u looks up.
-  The PS5 recipe is in the fork's `docs/WINE_PS5_BUILD.md`. It gets its own pin and a
-  `THIRD_PARTY.md` row.
-- The pinned Wine tree's 13 `fonts/*.ttf` go to `share/wine/fonts` (`runtime.sh`) and to
-  `drive_c/windows/Fonts` (`prefix.sh`), because `/app0` cannot be listed.
-- `gdi64.exe` draws "Wg" in Tahoma and counts the ink pixels.
-- d2 and d3 share a launch when libfreetype is ready in time.
+**FreeType.**
+- The PS5's pin (2.13.3, sha256, the same units and 46 exports), compiled by orbis-clang in
+  `build_wine_orbis.sh`.
+- Configure takes it (`SONAME_LIBFREETYPE "libfreetype.so"`; the build fails otherwise).
+- `libfreetype.prx` is 1.4 MB and imports 10 names from ntdll (the malloc family, the exit and
+  stdio wraps).
+- **Fonts:** Wine's 13 `.ttf` go into the prefix's `drive_c/windows/Fonts` only
+  (`prefix.sh --extras`, which also adds `gdi64.exe` and checks `MenuHeight`). The runtime gets
+  none.
 
-**Line:** `PS4WINE d3 fonts n=N tahoma=0|1 text_px=N exit=0`
-- **Rule:** `n>=13`, `tahoma=1`, `text_px>=50`. The threshold is confirmed by the host run before
-  the console run.
+**The title** (`native/orbis/pw_milestone_orbis.c`, replacing `pw_d1_orbis.c`).
+- **Plans.** `PS4WINE_MILESTONE=d1|d2` in `env.txt` picks one, default d2. Progress files are
+  `/data/ps4-wine/<plan>/progress.txt`; records are `PW_MS stage=` and `PW_MS step`.
+- **The d2 stages:**
+
+  | Stage | Does |
+  |---|---|
+  | `w32u_bind` | win32u's slots, the `__wrap_dlsym` slot by name (`w32u_dlsym`); an `other` slot is logged with `module+offset` |
+  | `ft_bind` | libfreetype's slots and `FT_Init_FreeType` by look-up. FreeType is not called before ntdll's start, because its malloc is ntdll's heap |
+  | `display` | VideoOut open, one black flip |
+  | `gdi` | `C:\gdi64.exe` |
+
+- **The present sink.** ntdll's `pw_wine_set_present_sink` hands the user driver's BGRA frames to
+  the title. The title scales them by an integer factor, centres them (800×600 lands at 560,240),
+  swaps them to R,G,B,A and flips. The frame one second after the first non-black one is the
+  framebuffer readback.
+- **Logging.** `WINEDEBUG` gains `warn+ps5drv`: patch 0400 warns "no pw_wine_present" when the sink
+  look-up fails.
+
+**gdi64.exe** (`tests/wine_gdi64.c`, host test `tests/test_wine_gdi64.py`). It prints:
+```
+GDI64 screen=WxH pixel=RRGGBB fonts=N tahoma=0|1 text_px=N window=ok|<call>:<error>
+```
+- `pixel` is an orange fill of a 64×64 DIB section, read back with `GetPixel`.
+- `fonts` counts `EnumFontFamiliesExW(DEFAULT_CHARSET)` callbacks, one per family and charset.
+- `text_px` counts the ink of "Wg" in 32 px non-antialiased Tahoma.
+- `window` is an orange 400×300 `WS_POPUP` at 200,150 with a green 200×150 rectangle at 100,75,
+  shown for 2 s.
+- On the host Wine (headless, font-less): `screen=1024x768 pixel=ff8000 fonts=0 tahoma=0
+  text_px=0 window=create:1400`. There is no display driver there.
+
+**Lines** (one launch gives both; check each with `check.sh d2|d3 --log <the same log>`):
+```
+PS4WINE d2 gdi win32u=ok|fail driver=ps5|<screen> pixel= exit= screen= window= frames= drawn= frame= fb= server= display= w32u_bound= w32u_dlsym= w32u_first= build= stages= ...
+PS4WINE d3 fonts n=<families> tahoma= text_px= exit= ft_bound= ft_first= ft_init_sym= build= stages= ...
+```
+
+**Rules**, fixed before the first launch:
+- **d2:** `win32u=ok`, `pixel=ff8000` and `exit=0`, plus `--fb` pixels from the window's geometry:
+  960,540 = 0,255,0 (the green rectangle) and 780,410 = 255,128,0 (the orange window).
+- **d3:** `tahoma=1`, `text_px>=50` and `exit=0`, with `n>=1`. **Changed before any d3 run:** the
+  planned `n>=13` was a guess the host could not confirm (its Wine has no FreeType), and the count
+  is per family and charset, so `n` is recorded. 50 ink pixels is far below "Wg" at 32 px
+  (a W alone is about 25×23 px with 3 px strokes).
+
+**Not host-tested:** the user driver and the present sink (there is no host build with
+`WINE_PS5_USER_DRIVER` yet; that comes with d4's reference frames), FreeType and the fonts.
 
 ### d4: winemine on screen, scripted click, framebuffer pixels
 

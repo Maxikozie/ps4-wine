@@ -1,0 +1,9 @@
+# synthetic fixture, written before the first d2/d3 launch (format of logs.sh: HH:MM:SS N|K text)
+15:10:01 N PW_MS start plan=d2 exe=C:\gdi64.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/d2/progress.txt
+15:10:01 N PW_MS stage=w32u_bind w32u_load=ok w32u_bound=94/94 w32u_zero=0 w32u_lazy=0 w32u_other=0 w32u_nosym=0 w32u_first=- w32u_dlsym=bound w32u_init=1
+15:10:01 N PW_MS stage=ft_bind ft_load=ok ft_bound=10/10 ft_first=- ft_init_sym=1
+15:10:01 N PW_MS stage=display display=ok
+15:10:05 N STDOUT GDI64 screen=800x600 pixel=ff8000 fonts=24 tahoma=1 text_px=310 window=ok
+15:10:05 N PW_MS stage=gdi exit=0 server=inprocess frames=130 drawn=128 frame=800x600 fb=ok screen=800x600 pixel=ff8000 fonts=24 tahoma=1 text_px=310 window=ok
+15:10:05 N PS4WINE d2 gdi win32u=ok driver=ps5 pixel=ff8000 exit=0 screen=800x600 window=ok frames=130 drawn=128 frame=800x600 fb=ok server=inprocess display=ok w32u_bound=94/94 w32u_dlsym=bound w32u_first=- build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=9
+15:10:05 N PS4WINE d3 fonts n=24 tahoma=1 text_px=310 exit=0 ft_bound=10/10 ft_first=- ft_init_sym=1 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=9

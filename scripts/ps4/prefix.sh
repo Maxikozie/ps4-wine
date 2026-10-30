@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # prefix.sh: make the Wine prefix on the host (the console cannot run wineboot: patch 0550 stops
-# process creation) with the fork's host Wine, trim it, add hello.exe, and upload it to the
-# console's /data/ps4-wine/prefix over FTP.
+# process creation) with the fork's host Wine, trim it, add the test programs (hello.exe,
+# gdi64.exe) and Wine's fonts, and upload it to the console's /data/ps4-wine/prefix over FTP.
 # From: prospero-win tools/pw_prefix.py @ 0e7b6b4 (LGPL-2.1-or-later): what is stripped from a
 # prefix before the upload (dosdevices) and the size verification.
 set -euo pipefail
@@ -9,34 +9,85 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/prefix.sh [--make] [--upload] [--dest DIR] [--dry-run]
+usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-run]
 
   --make     WINEPREFIX=build/prefix WINEARCH=wow64 wineboot --init with the host Wine
              (third_party/prospero-win/.deps/wine-host), then: remove dosdevices (Wine recreates
              it on the console; a title cannot make symlinks), keep the DLL/EXE files under
              drive_c/windows/{system32,syswow64} (the PE loader maps a builtin only when its
              file is there), build tests/wine_hello64.c with x86_64-w64-mingw32-gcc into
-             drive_c/hello.exe
+             drive_c/hello.exe, then the extras
   --upload   mirror build/prefix to \$PS4_HOST:$PS4_DATA_ROOT/prefix with lftp, verify sizes
-  (no option: both)
+  --extras   into the existing build/prefix: tests/wine_gdi64.c -> drive_c/gdi64.exe (milestone
+             d2/d3), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
+             build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
+             win32u finds fonts only there), the MenuHeight check; then put just those files
+             (no mirror of the whole prefix)
+  (no option: --make and --upload)
 USAGE
 }
-MAKE=0; UPLOAD=0; DRY=0; DEST="$PS4_DATA_ROOT/prefix"
+MAKE=0; UPLOAD=0; EXTRAS=0; DRY=0; DEST="$PS4_DATA_ROOT/prefix"
 while [ $# -gt 0 ]; do
     case "$1" in
         --make) MAKE=1; shift ;;
         --upload) UPLOAD=1; shift ;;
+        --extras) EXTRAS=1; shift ;;
         --dest) DEST="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage; exit 1 ;;
     esac
 done
-[ "$MAKE$UPLOAD" != 00 ] || { MAKE=1; UPLOAD=1; }
+[ "$MAKE$UPLOAD$EXTRAS" != 000 ] || { MAKE=1; UPLOAD=1; }
 
 PREFIX="$BUILD_DIR/prefix"
 WINE="$PROSPERO_WIN_DIR/.deps/wine-host/install/usr/bin/wine"
 HELLO_SRC="$PROSPERO_WIN_DIR/tests/wine_hello64.c"
+GDI_SRC="$PROSPERO_WIN_DIR/tests/wine_gdi64.c"
+FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
+EXTRA_FILES=(drive_c/gdi64.exe)
+
+# The test programs, the fonts and the registry check; fills EXTRA_FILES.
+add_extras() {
+    need_cmd x86_64-w64-mingw32-gcc
+    x86_64-w64-mingw32-gcc -O1 -o "$PREFIX/drive_c/gdi64.exe" "$GDI_SRC" -lgdi32 -luser32
+    ls "$FONTS_SRC"/*.ttf >/dev/null 2>&1 || die "no fonts at $FONTS_SRC: scripts/ps4/build.sh wine"
+    mkdir -p "$PREFIX/drive_c/windows/Fonts"
+    cp "$FONTS_SRC"/*.ttf "$PREFIX/drive_c/windows/Fonts/"
+    for f in "$PREFIX"/drive_c/windows/Fonts/*.ttf; do EXTRA_FILES+=("drive_c/windows/Fonts/$(basename "$f")"); done
+    # A font-less wineboot without patch 0410 stored stack garbage as MenuHeight (prospero-win
+    # measured 6750319), and every window then had a giant menu bar: refuse an implausible one.
+    local menu
+    menu="$(sed -n 's/^"MenuHeight"="\([0-9-]*\)"/\1/p' "$PREFIX/user.reg" | head -n1)"
+    if [ -n "$menu" ] && { [ "$menu" -lt 0 ] || [ "$menu" -gt 64 ]; }; then
+        die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
+    fi
+    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+}
+
+# put FILES... (relative to the prefix) and verify their sizes.
+put_files() {
+    local cmds="set ftp:passive-mode true; set net:timeout 20; set net:max-retries 2;
+open ftp://$PS4_HOST:$PS4_FTP_PORT;" dirs="" f bad=0 want have
+    for f in "$@"; do
+        case " $dirs " in *" $(dirname "$f") "*) ;; *) dirs="$dirs $(dirname "$f")"; cmds="$cmds
+mkdir -pf '$DEST/$(dirname "$f")';" ;; esac
+        cmds="$cmds
+put -O '$DEST/$(dirname "$f")' '$PREFIX/$f';"
+    done
+    cmds="$cmds
+quit"
+    if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$cmds"; return 0; fi
+    lftp -c "$cmds" >&2
+    for f in "$@"; do
+        want="$(stat -c %s "$PREFIX/$f")"
+        have="$(curl -sS --ftp-pasv "ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/$(dirname "$f")/" 2>/dev/null |
+            awk -v n="$(basename "$f")" '$NF == n { print $5 }' | head -n1 || true)"
+        [ "$have" = "$want" ] || { log "size mismatch: $f local $want remote ${have:-missing}"; bad=$((bad + 1)); }
+    done
+    [ "$bad" = 0 ] || die "upload incomplete"
+    log "put and verified $# file(s) under $DEST"
+}
 
 if [ "$MAKE" = 1 ]; then
     [ -x "$WINE" ] || die "no host Wine at $WINE: scripts/ps4/build.sh wine"
@@ -53,8 +104,15 @@ if [ "$MAKE" = 1 ]; then
     # builtin only when its file exists there (outside prefix bootstrap mode), so without them
     # the first load fails with "could not load kernel32.dll, status c0000135" (console run 14).
     x86_64-w64-mingw32-gcc -O1 -o "$PREFIX/drive_c/hello.exe" "$HELLO_SRC"
+    add_extras
     find "$PREFIX" -type l -delete   # no symlinks reach the console
     log "prefix: $(find "$PREFIX" -type f | wc -l) files, $(du -sh "$PREFIX" | cut -f1); hello.exe $(stat -c %s "$PREFIX/drive_c/hello.exe") bytes"
+fi
+
+if [ "$EXTRAS" = 1 ] && [ "$MAKE" = 0 ]; then
+    [ -f "$PREFIX/user.reg" ] || die "no prefix at $PREFIX: run with --make"
+    add_extras
+    [ "$UPLOAD" = 1 ] || { need_cmd lftp; put_files "${EXTRA_FILES[@]}"; }
 fi
 
 if [ "$UPLOAD" = 1 ]; then
@@ -73,7 +131,7 @@ quit"
     log "uploading to ftp://$PS4_HOST:$PS4_FTP_PORT$DEST"
     lftp -c "$CMDS" >&2
     bad=0
-    for f in system.reg user.reg userdef.reg drive_c/hello.exe; do
+    for f in system.reg user.reg userdef.reg drive_c/hello.exe drive_c/gdi64.exe; do
         want="$(stat -c %s "$PREFIX/$f")"
         have="$(curl -sS --ftp-pasv "ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/$(dirname "$f")/" 2>/dev/null |
             awk -v n="$(basename "$f")" '$NF == n { print $5 }' | head -n1 || true)"

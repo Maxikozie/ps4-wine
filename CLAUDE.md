@@ -112,10 +112,16 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   already loaded (the loader does not load a NEEDED app module itself) and the
   names agree: exporter linked `-soname NAME.so` and converted with
   `create-fself -libname=NAME`, importer linked against a stub with that soname
-  (`tools/orbis_import_stub.py`). libkernel also exports `dlopen`/`dlsym`/`dlclose`.
-  A PT_LOAD that starts mid-page is ENOEXEC
-  (`--no-rosegment`, 16 KiB pages). Each PRX has its own musl: `environ` and
-  `stderr` are per module.
+  (`tools/orbis_import_stub.py`). libkernel also exports `dlopen`/`dlsym`/`dlclose`,
+  and create-fself gives an import to the first NEEDED library exporting its name
+  (libkernel first): import those from ntdll as `__wrap_` names. A PT_LOAD
+  that starts mid-page is ENOEXEC (`--no-rosegment`, 16 KiB pages). Each PRX
+  has its own musl: `environ` and `stderr` are per module.
+- `realpath()` fails for every path (musl reads `/proc/self/fd/N` with
+  `readlink`, an ENOSYS stub): the cwd emulation's lexical one on Orbis. Every
+  module that opens files by Wine's `dosdevices/c:` names links its own cwd
+  emulation (the `c:` link is virtual). Private read-only `mmap` of a `/data`
+  file works.
 - `libc.a` has a 16-bit `wchar_t` (`wmem*` wrong for 4 bytes), `secure_getenv`
   returns NULL. klog (`sceKernelDebugOutText`) costs 8–15 ms a line and blocks
   when nothing drains it: netlog for volume, klog for startup and fatal lines.

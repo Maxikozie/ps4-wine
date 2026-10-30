@@ -1,0 +1,5 @@
+# synthetic fixture, written before the first d2/d3 launch (format of logs.sh: HH:MM:SS N|K text)
+15:10:01 N PW_MS start plan=d2 exe=C:\gdi64.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/d2/progress.txt
+15:10:01 N PW_MS stage=w32u_bind w32u_load=ok w32u_bound=94/94 w32u_zero=0 w32u_lazy=0 w32u_other=0 w32u_nosym=0 w32u_first=- w32u_dlsym=bound w32u_init=1
+15:10:01 N PW_MS stage=ft_bind ft_load=ok ft_bound=10/10 ft_first=- ft_init_sym=1
+15:10:01 N PW_MS stage=display display=ok
