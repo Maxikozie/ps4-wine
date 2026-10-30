@@ -16,6 +16,9 @@ PS4_DATA_ROOT="${PS4_DATA_ROOT:-/data/ps4-wine}"
 TITLE_ID="${TITLE_ID:-PSWN00001}"
 TITLE_NAME="${TITLE_NAME:-ps4-wine}"
 CONTENT_ID="${CONTENT_ID:-IV0000-${TITLE_ID}_00-PS4WINE000000000}"
+# Milestone b's triangle has its own title, so installing it leaves the probe (and later Wine) in place.
+TRIANGLE_TITLE_ID="${TRIANGLE_TITLE_ID:-PSWN00002}"
+TRIANGLE_TITLE_NAME="${TRIANGLE_TITLE_NAME:-ps4-wine triangle}"
 
 # Host paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,0 +1,3 @@
+01:10:01 K <118>[Syscore App] [   0.002] triangle: PS4WINE triangle start build=abc1234 netlog=192.168.8.116:18194
+01:10:02 N [   0.400] triangle: ext VK_KHR_8bit_storage VK_KHR_device_fault VK_EXT_device_fault VK_KHR_swapchain
+01:10:08 N PS4WINE b triangle frames=300 api=1.3 maintenance5=1 robustness2=1 gpl=0 dyn_rendering=1 xfb=1 build=abc1234 edyn3=1 desc_idx=1 timeline=1 bda=1 cbc=1 dce=1 cond_render=0 indirect_count=0 exts=190 heap0_mib=3072 max_alloc_mib=4095 swapchain=1920x1080 fmt=37 fps=60.0 gpu_hang=0 err=-

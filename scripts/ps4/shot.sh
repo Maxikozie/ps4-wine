@@ -19,9 +19,16 @@ usage: scripts/ps4/shot.sh [--out FILE] [--device /dev/videoN] [--label L]
   --pixel X,Y         print "rgb=R,G,B" of that pixel
   --expect-rgb R,G,B  with --pixel: exit 0 if every channel is within --tol (default 40), else 1
   --list              list candidate capture devices
+Captures are pinned to MJPEG at ${CAPTURE_SIZE} (the PS4's output size), so --pixel 960,540 is
+the frame centre; a capture of any other size is refused (exit 4) rather than compared.
 Exit: 0 ok / pixel matched, 1 pixel mismatch, 3 no capture device, 4 capture failed.
 USAGE
 }
+
+# Pinned, not negotiated: capture sticks default to whatever mode they like (often 640x480 YUYV),
+# and the milestone gates name pixels of a 1920x1080 frame.
+CAPTURE_FORMAT=mjpeg
+CAPTURE_SIZE=1920x1080
 
 OUT=""; DEV="$PS4_CAPTURE_DEV"; IN=""; PIXEL=""; EXPECT=""; TOL=40; LABEL=shot; LIST=0
 while [ $# -gt 0 ]; do
@@ -69,10 +76,13 @@ if [ -z "$IN" ]; then
     mkdir -p "$LOGS_DIR"
     OUT="${OUT:-$LOGS_DIR/$(timestamp)-$LABEL.png}"
     # Skip the first frames: capture sticks return garbage until their pipeline settles.
-    if ! ffmpeg -loglevel error -y -f v4l2 -i "$DEV" -vf "select=gte(n\,8)" -frames:v 1 -update 1 "$OUT"; then
-        log "capture from $DEV failed"; exit 4
+    if ! ffmpeg -loglevel error -y -f v4l2 -input_format "$CAPTURE_FORMAT" -video_size "$CAPTURE_SIZE" -i "$DEV" \
+            -vf "select=gte(n\,8)" -frames:v 1 -update 1 "$OUT"; then
+        log "capture from $DEV ($CAPTURE_FORMAT $CAPTURE_SIZE) failed; v4l2-ctl -d $DEV --list-formats-ext lists what it offers"; exit 4
     fi
-    log "saved $OUT from $DEV ($(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$OUT" 2>/dev/null || echo '?x?'))"
+    SIZE="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$OUT" 2>/dev/null || echo '?x?')"
+    log "saved $OUT from $DEV ($CAPTURE_FORMAT $SIZE)"
+    [ "$SIZE" = "$CAPTURE_SIZE" ] || { log "capture is $SIZE, not $CAPTURE_SIZE: pixel coordinates would be wrong"; exit 4; }
     IN="$OUT"
 fi
 

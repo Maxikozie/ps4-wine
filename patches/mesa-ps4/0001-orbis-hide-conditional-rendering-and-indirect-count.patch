@@ -1,0 +1,71 @@
+mesa-ps4 @ 1a59cc1: do not advertise VK_EXT_conditional_rendering, VK_KHR/AMD_draw_indirect_count
+or the drawIndirectCount / conditionalRendering features on the console. Both hang GFX7 Liverpool
+(docs/ps4/MILESTONES.md milestone b; ARCHITECTURE.md 4.8). Applied by scripts/ps4/build.sh mesa.
+
+Copyright (C) 2026 the ps4-wine authors. The change is to MIT-licensed Mesa code and is offered
+under the same MIT terms as the file it patches.
+
+--- a/src/amd/vulkan/radv_physical_device.c
++++ b/src/amd/vulkan/radv_physical_device.c
+@@ -26,6 +26,16 @@
+ #else
+ #define ORBIS_NO_ZERO_INIT_MEMORY 0
+ #endif
++
++/* Indirect draws with a count buffer and conditional rendering hang Liverpool's command processor
++ * (ps4-mesa-docs cts.md: conditional_rendering.*.draw_indexed_indirect_count; nx-on-orbis saw both
++ * end in VK_ERROR_DEVICE_LOST). Neither extension nor its feature bit is offered on the console, so
++ * no consumer can reach them. ps4-wine patches/mesa-ps4/0001. */
++#if defined(__PS4__)
++#define ORBIS_HIDE_HANGING_FEATURES 1
++#else
++#define ORBIS_HIDE_HANGING_FEATURES 0
++#endif
+ #include "vk_log.h"
+ #include "vk_shader_module.h"
+ 
+@@ -736,7 +746,7 @@
+       .KHR_device_address_commands = true,
+       .KHR_device_fault = true,
+       .KHR_device_group = true,
+-      .KHR_draw_indirect_count = true,
++      .KHR_draw_indirect_count = !ORBIS_HIDE_HANGING_FEATURES,
+       .KHR_driver_properties = true,
+       .KHR_dynamic_rendering = true,
+       .KHR_dynamic_rendering_local_read = true,
+@@ -884,7 +894,7 @@
+       .EXT_buffer_device_address = true,
+       .EXT_calibrated_timestamps = radv_calibrated_timestamps_enabled(pdev),
+       .EXT_color_write_enable = true,
+-      .EXT_conditional_rendering = true,
++      .EXT_conditional_rendering = !ORBIS_HIDE_HANGING_FEATURES,
+       .EXT_conservative_rasterization = pdev->info.gfx_level >= GFX9,
+       .EXT_custom_border_color = true,
+       .EXT_custom_resolve = true,
+@@ -1016,7 +1026,7 @@
+       .EXT_zero_initialize_device_memory = !ORBIS_NO_ZERO_INIT_MEMORY,
+       .AMD_buffer_marker = true,
+       .AMD_device_coherent_memory = radv_device_coherent_memory_enabled(pdev),
+-      .AMD_draw_indirect_count = true,
++      .AMD_draw_indirect_count = !ORBIS_HIDE_HANGING_FEATURES,
+       .AMD_gcn_shader = true,
+       .AMD_gpu_shader_half_float = pdev->info.compiler_info.has_packed_math_16bit,
+       .AMD_gpu_shader_int16 = pdev->info.compiler_info.has_packed_math_16bit,
+@@ -1242,7 +1252,7 @@
+ 
+       /* Vulkan 1.2 */
+       .samplerMirrorClampToEdge = true,
+-      .drawIndirectCount = true,
++      .drawIndirectCount = !ORBIS_HIDE_HANGING_FEATURES,
+       .storageBuffer8BitAccess = true,
+       .uniformAndStorageBuffer8BitAccess = true,
+       .storagePushConstant8 = true,
+@@ -1336,7 +1346,7 @@
+       .pushDescriptor = true,
+ 
+       /* VK_EXT_conditional_rendering */
+-      .conditionalRendering = true,
++      .conditionalRendering = !ORBIS_HIDE_HANGING_FEATURES,
+       .inheritedConditionalRendering = false,
+ 
+       /* VK_KHR_vertex_attribute_divisor */

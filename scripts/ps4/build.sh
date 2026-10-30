@@ -12,11 +12,12 @@ usage: scripts/ps4/build.sh --check-toolchain
   --check-toolchain  report every host tool, SDK path and reference checkout the
                      port needs; exit 1 if a required one is missing
   compat             orbis-compat -> build/orbis-compat (+ build/orbis-compat-stage)  (milestone a)
-  mesa               mesa-ps4 RADV -> build/mesa-ps4/src/amd/vulkan/libvulkan_radeon.a  (milestone a)
+  mesa               mesa-ps4 RADV + patches/mesa-ps4/*.patch -> build/mesa-ps4/src/amd/vulkan/libvulkan_radeon.a
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests of the probe's pure helpers and of check.sh a
-  triangle           Vulkan triangle + capability dump                  (milestone b)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh a and b
+  triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
+                     -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   wine               Wine PE side (host) + Orbis PRX side via the fork  (milestone c)
   title              the ps4-wine title (native/orbis in the fork)      (milestone c)
   all                wine + title
@@ -100,6 +101,27 @@ build_compat() {
     log "orbis-compat: ok ($ORBIS_COMPAT_STAGE)"
 }
 
+# The clone at $MESA_PS4_COMMIT plus patches/mesa-ps4/*.patch, in order. A stamp records the patch
+# series and the resulting diff; when both still match nothing is touched (ninja then rebuilds
+# nothing), otherwise the clone is reset and the series re-applied. The clone is ours (build/), never refs/.
+mesa_patch() {
+    local stamp="$MESA_SRC_DIR/.git/ps4wine-patches" want p
+    want="$({ echo "$MESA_PS4_COMMIT"; for p in "$REPO_ROOT"/patches/mesa-ps4/*.patch; do [ -f "$p" ] && sha256sum < "$p"; done; } | sha256sum | cut -d' ' -f1)"
+    if [ -f "$stamp" ] && [ "$(git -C "$MESA_SRC_DIR" rev-parse --short=7 HEAD)" = "${MESA_PS4_COMMIT:0:7}" ] && \
+       [ "$(sed -n 1p "$stamp")" = "$want" ] && \
+       [ "$(sed -n 2p "$stamp")" = "$(git -C "$MESA_SRC_DIR" diff --no-ext-diff HEAD | sha256sum | cut -d' ' -f1)" ]; then
+        log "mesa: $MESA_PS4_COMMIT with patches/mesa-ps4 already applied"; return
+    fi
+    git -C "$MESA_SRC_DIR" -c advice.detachedHead=false checkout --quiet --force "$MESA_PS4_COMMIT"
+    git -C "$MESA_SRC_DIR" reset --quiet --hard "$MESA_PS4_COMMIT"
+    for p in "$REPO_ROOT"/patches/mesa-ps4/*.patch; do
+        [ -f "$p" ] || continue
+        log "mesa: applying $(basename "$p")"
+        git -C "$MESA_SRC_DIR" apply "$p" || die "$(basename "$p") does not apply to mesa-ps4 $MESA_PS4_COMMIT"
+    done
+    printf '%s\n%s\n' "$want" "$(git -C "$MESA_SRC_DIR" diff --no-ext-diff HEAD | sha256sum | cut -d' ' -f1)" > "$stamp"
+}
+
 # mesa-ps4's RADV + zink/EGL, configured as build-support/orbis/build.sh does but
 # without nix (Mesa's host deps come from apt) and out of the reference tree: we
 # build a local clone at $MESA_PS4_COMMIT in a separate meson build directory.
@@ -116,8 +138,7 @@ build_mesa() {
         mkdir -p "$(dirname "$MESA_SRC_DIR")"
         git clone --quiet --no-checkout "$MESA_PS4_DIR" "$MESA_SRC_DIR"
     fi
-    git -C "$MESA_SRC_DIR" -c advice.detachedHead=false checkout --quiet "$MESA_PS4_COMMIT"
-    [ -z "$(git -C "$MESA_SRC_DIR" status --porcelain --untracked-files=no)" ] || die "$MESA_SRC_DIR has local changes"
+    mesa_patch
 
     log "mesa: cross file -> $cross/orbis.ini"
     rm -rf "$cross"; mkdir -p "$cross/lib/pkgconfig"
@@ -221,14 +242,70 @@ build_probe() {
     "$SCRIPT_DIR/pkg.sh" --elf "$out/probe.elf" --name probe --assets "$out/assets"
 }
 
-# Host tests: the probe's pure helpers and check.sh's milestone a rule.
+# Host tests: the probe's and the triangle's pure helpers, check.sh's milestone a and b rules.
 probe_test() {
     local out="$BUILD_DIR/test"
     mkdir -p "$out"
     clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I"$REPO_ROOT/probes" \
         "$REPO_ROOT/tests/probe_util_test.c" "$REPO_ROOT/probes/probe_util.c" -o "$out/probe_util_test"
     "$out/probe_util_test"
+    clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I"$REPO_ROOT/probes" \
+        "$REPO_ROOT/tests/triangle_caps_test.c" "$REPO_ROOT/probes/triangle_caps.c" "$REPO_ROOT/probes/probe_util.c" \
+        -o "$out/triangle_caps_test"
+    "$out/triangle_caps_test"
     "$REPO_ROOT/tests/check_a_test.sh"
+    "$REPO_ROOT/tests/check_b_test.sh"
+}
+
+# Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
+# orbis-porting-kit's title link (cmake/ps4-openorbis.cmake: orbis-tls.ld, --no-rosegment,
+# orbis-compat --whole-archive + its libc16 objects) plus the driver as mesa-ps4's linkprobe.sh
+# links it (--whole-archive libvulkan_radeon.a, zlib, SceGnmDriver, SceVideoOut). The kit's
+# vkloader supplies the vk* symbols; its thunks are generated from our own objects on every build.
+build_triangle() {
+    local out="$BUILD_DIR/triangle" oo="$OO_PS4_TOOLCHAIN" bid cf=() f bad radv zlib
+    radv="$MESA_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a"
+    [ -f "$radv" ] || die "build mesa first: scripts/ps4/build.sh mesa"
+    zlib="$(echo "$MESA_BUILD_DIR"/subprojects/zlib-*/libz.a)"
+    [ -f "$zlib" ] || die "no zlib archive under $MESA_BUILD_DIR/subprojects"
+    [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
+    [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
+    need_cmd glslangValidator
+    bid="$(build_id)"
+    mapfile -t cf < <(orbis_cflags)
+    rm -rf "$out"; mkdir -p "$out/obj" "$out/kit"
+    log "triangle: build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
+
+    for f in vert frag; do
+        glslangValidator -V --quiet "$REPO_ROOT/probes/triangle.$f" --vn "triangle_${f}_spv" -o "$out/triangle_${f}_spv.h" >/dev/null
+    done
+    for f in triangle triangle_caps probe_util probe_netlog; do
+        clang "${cf[@]}" -I"$MESA_SRC_DIR/include" -I"$out" -DPROBE_BUILD_ID="\"$bid\"" \
+            -DPROBE_NETLOG_HOST="\"$PS4_NETLOG_HOST\"" -DPROBE_NETLOG_PORT="$PS4_NETLOG_PORT" \
+            -c "$REPO_ROOT/probes/$f.c" -o "$out/obj/$f.o"
+    done
+    bad="$(llvm-objdump -d "$out"/obj/*.o | grep -cw syscall || true)"
+    [ "$bad" = 0 ] || die "triangle objects contain $bad raw syscall instruction(s)"
+
+    # The kit's loader: compiled from refs/ as is (its own style, so no -Werror).
+    python3 -I "$ORBIS_KIT_DIR/vkloader/gen.py" --objs "$out/obj" \
+        --header "$MESA_SRC_DIR/include/vulkan/vulkan_core.h" --out "$out/kit/vkthunks.c" >&2
+    for f in "$ORBIS_KIT_DIR/vkloader/vkloader.c" "$out/kit/vkthunks.c"; do
+        clang "${cf[@]/-Werror/}" -Wno-unused-parameter -I"$MESA_SRC_DIR/include" -I"$ORBIS_KIT_DIR/vkloader" \
+            -c "$f" -o "$out/kit/$(basename "${f%.c}").o"
+    done
+
+    clang --target=x86_64-pc-freebsd12-elf --sysroot="$oo" -nostdlib -fuse-ld=lld -pie -Wl,-m,elf_x86_64 \
+        -Wl,--script="$ORBIS_KIT_DIR/cmake/orbis-tls.ld" -Wl,--eh-frame-hdr -Wl,--no-rosegment \
+        -Wl,--Map="$out/triangle.map" \
+        "$out"/obj/*.o "$out"/kit/*.o \
+        -Wl,--whole-archive "$ORBIS_COMPAT_BUILD/liborbis-compat.a" -Wl,--no-whole-archive \
+        "$ORBIS_COMPAT_BUILD"/libc16/libc16_*.o \
+        -Wl,--whole-archive "$radv" -Wl,--no-whole-archive "$zlib" \
+        -L"$oo/lib" -lc -lkernel -lc++ -lSceGnmDriver -lSceVideoOut -lSceNet \
+        "$oo/lib/crt1.o" -o "$out/triangle.elf"
+    log "triangle: ELF $(stat -c %s "$out/triangle.elf") bytes, needs: $(llvm-readelf -d "$out/triangle.elf" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
+    "$SCRIPT_DIR/pkg.sh" --elf "$out/triangle.elf" --name triangle --title-id "$TRIANGLE_TITLE_ID" --title "$TRIANGLE_TITLE_NAME"
 }
 
 stub() { # stub <target> <milestone> <lines...>
@@ -246,10 +323,7 @@ case "$1" in
     mesa) build_mesa ;;
     probe) build_probe ;;
     probe-test) probe_test ;;
-    triangle) stub triangle b \
-        "build.sh mesa (done in milestone a) -> build/mesa-ps4/src/amd/vulkan/libvulkan_radeon.a + subprojects/zlib-*/libz.a" \
-        "clang ... probes/triangle.c \$ORBIS_KIT_DIR/vkloader/vkloader.c vkthunks.c" \
-        "ld.lld ... --whole-archive libvulkan_radeon.a --no-whole-archive libz.a -lSceGnmDriver -lSceVideoOut ..." ;;
+    triangle) build_triangle ;;
     wine) stub wine c \
         "git submodule update --init third_party/prospero-win   (fork, branch orbis)" \
         "third_party/prospero-win/tools/build_host_wine.sh        # PE modules, winebuild, widl" \

@@ -49,6 +49,7 @@ ps4-wine/                       GPL-3.0 (this repo)
                                 timeouts, modelled on nx-on-orbis probe/probe.c)
   pkg/                          package skeleton: icon0.png, sfo values, right.sprx + sce_module from the SDK
   upstream/                     console-agnostic patches bound for prospero-win (LGPL, nx-free)
+  patches/mesa-ps4/             our patches on mesa-ps4 1a59cc1, applied by build.sh mesa to its clone in build/
   third_party/prospero-win/     git submodule -> our fork of mpereiraesaa/prospero-win,
                                 branch `orbis` (LGPL-2.1-or-later; created in milestone c)
   refs/                         read-only reference checkouts (gitignored)
@@ -173,7 +174,7 @@ file against a different API; **drop** has no PS4 counterpart.
 ### 4.8 Vulkan and RADV
 - mesa-ps4 at `1a59cc1`: RADV on `CHIP_LIVERPOOL` (Slim/base, 18 CU) / `CHIP_GLADIUS` (Pro), GFX7, reports Vulkan 1.3 (measured 1.3.358, 197 extensions). Present in source: `KHR_maintenance5/6`, `KHR_robustness2`, `EXT_robustness2`, `KHR_dynamic_rendering`, `EXT_transform_feedback` (CTS had failures), `EXT_graphics_pipeline_library`, `EXT_extended_dynamic_state3`, `EXT_descriptor_indexing`, `KHR_timeline_semaphore`, `KHR_buffer_device_address`. Missing: float16, ASTC/ETC2, `external_memory_host`, `EXT_index_type_uint8`. DXVK 2.6.2's hard requirements are covered; milestone b dumps the real list.
 - Build: `ps4/build.sh` with the kit's `orbis.ini.in` cross file; `-Dvulkan-drivers=amd -Dplatforms=orbis -Dllvm=disabled -Dshader-cache=enabled`. Driver defaults `ORBIS_3D_LINEAR=1`, `ORBIS_NO_TESS` (D3D9 needs no tessellation).
-- Traps DXVK must respect: 2 MiB submission limit (watch DXVK's command buffer sizes; split submits if a game's frame overflows), no conditional rendering / draw-indirect-count (DXVK 2.6 uses the former for D3D11 predication only, d3d9 unaffected; disable both in the driver's extension table as nx-on-orbis did), ~1/1200 submit stall (pre-existing), `vkAllocateMemory` tops out around 896 MiB, surface formats RGBA only.
+- Traps DXVK must respect: 2 MiB submission limit (watch DXVK's command buffer sizes; split submits if a game's frame overflows), no conditional rendering / draw-indirect-count (DXVK 2.6 uses the former for D3D11 predication only, d3d9 unaffected; disabled in the driver's extension and feature tables by `patches/mesa-ps4/0001`; nx-on-orbis avoided them in the consumer instead), ~1/1200 submit stall (pre-existing), `vkAllocateMemory` tops out around 896 MiB, surface formats RGBA only.
 - Linking: `libvulkan_radeon.a` `--whole-archive` + zlib + `-lSceGnmDriver -lSceVideoOut` into `libvulkan.prx`, with `pw_vulkan_radv_orbis.c` exporting `vkGetInstanceProcAddr`/`vkGetDeviceProcAddr` as `pw_vulkan_radv.c` does; vkloader thunks only for the title's own Vulkan probe.
 
 ### 4.9 Display and WSI

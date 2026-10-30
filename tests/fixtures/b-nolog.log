@@ -1,0 +1,2 @@
+01:10:01 K <118>[Syscore App] [   0.002] triangle: PS4WINE triangle start build=abc1234 netlog=192.168.8.116:18194
+01:10:02 N [   0.400] triangle: ext VK_KHR_8bit_storage VK_KHR_device_fault VK_EXT_device_fault VK_KHR_swapchain
