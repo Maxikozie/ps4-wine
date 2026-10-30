@@ -46,8 +46,12 @@ WIN="$RUNTIME/win/wine"
 # 1. the Orbis Unix side
 mkdir -p "$WIN/lib/wine/x86_64-unix"
 cp "$PRX_SRC"/*.prx "$WIN/lib/wine/x86_64-unix/"
-for m in pw_probe_mod pw_probe_tls; do
+# win32u.bind.txt: its ntdll import slots, which the d1 title checks one by one.
+cp "$PRX_SRC"/*.bind.txt "$WIN/lib/wine/x86_64-unix/" 2>/dev/null || true
+# The title's test modules (milestone c's recipe probes, milestone d1's binding modules and their slot tables).
+for m in pw_probe_mod pw_probe_tls pw_bind_lib pw_bind_use pw_bind_early pw_bind_data pw_bind_thunk; do
     [ ! -f "$BUILD_DIR/title/$m.prx" ] || cp "$BUILD_DIR/title/$m.prx" "$WIN/lib/wine/x86_64-unix/"
+    [ ! -f "$BUILD_DIR/title/$m.bind.txt" ] || cp "$BUILD_DIR/title/$m.bind.txt" "$WIN/lib/wine/x86_64-unix/"
 done
 chmod 755 "$WIN/lib/wine/x86_64-unix"/*.prx
 # 2. the PE side and the NLS files, from the host Wine (desktop-only modules left out)
@@ -72,7 +76,7 @@ if [ "$PRX_ONLY" = 1 ]; then
     # (mirror's newer-than test trusts the console's clock, which is wrong).
     SRC="$WIN/lib/wine/x86_64-unix"; SUB="/win/wine/lib/wine/x86_64-unix"
     PUTS=""
-    for f in "$SRC"/*.prx; do PUTS="$PUTS put -O '$DEST$SUB' '$f';"; done
+    for f in "$SRC"/*.prx "$SRC"/*.bind.txt; do if [ -f "$f" ]; then PUTS="$PUTS put -O '$DEST$SUB' '$f';"; fi; done
     CMDS="set ftp:passive-mode true; set net:timeout 20; set net:max-retries 2;
 open ftp://$PS4_HOST:$PS4_FTP_PORT;
 mkdir -pf '$DEST$SUB';
@@ -99,6 +103,6 @@ while IFS= read -r f; do
         awk -v n="$(basename "$rel")" '$NF == n { print $5 }' | head -n1 || true)"
     checked=$((checked + 1))
     if [ "$have" != "$want" ]; then log "size mismatch: $rel local $want remote ${have:-missing}"; bad=$((bad + 1)); fi
-done < <(find "$SRC" -type f \( -name '*.prx' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' \))
+done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' \))
 log "verified $checked file sizes, $bad mismatch(es)"
 [ "$bad" = 0 ] || die "upload incomplete"

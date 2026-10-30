@@ -9,11 +9,11 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d5|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
-  --no-shot    skip the pixel check of the milestones that have one (b, e): a pass is then
+  --no-shot    skip the pixel check of the milestones that have one (b, d1, e): a pass is then
                reported as "PASS (no shot)"; the other milestones are unaffected
   --fb         take the pixels from the title's framebuffer readback instead of the HDMI capture:
                requires fb=ok in its PS4WINE line, fetches it with fbshot.sh (or uses --shot FILE,
@@ -21,7 +21,10 @@ usage: scripts/ps4/check.sh <a|b|c|d|e|f|g|h> [--log FILE] [--shot FILE] [--no-s
                is checked, the HDMI output is not
   --note TEXT  free text for the last column of the LOG.md line
 Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
-                (orange marker: swapped red and blue fail it); e  960,540 = CHECK_E_RGB.
+                (orange marker: swapped red and blue fail it); d1 the same two on the title's VideoOut
+                test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
+Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2-d5 are not
+implemented yet (exit 2).
 USAGE
 }
 
@@ -39,8 +42,9 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|d5|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
+case "$MS" in d2|d3|d4|d5) log "$MS: the rule is written in docs/ps4/HANDOFF-d.md and not implemented yet"; exit 2 ;; esac
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -51,12 +55,19 @@ fi
 NOW="$(date '+%Y-%m-%d %H:%M')"
 BID="$(build_id)"
 
-# The last PS4WINE line for this milestone, stripped of the logs.sh prefix and klog's "<118>[...]" tag.
-LINE="$(grep -E "PS4WINE $MS " "$LOG" | tail -n1 | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\[[^]]*\] *//' || true)"
+# The last PS4WINE line for this milestone, stripped of the logs.sh prefix, klog's "<118>[...]" tag
+# and the diagnostics record's "<seq>\t<ns>\tINFO\t" columns (its copy of the line arrives over netlog too).
+LINE="$(grep -E "PS4WINE $MS " "$LOG" | tail -n1 | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\[[^]]*\] *//; s/^[0-9]+\t[0-9]+\t[A-Z]+\t//' || true)"
 emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "$2" "${NOTE:+$NOTE; }$(basename "$LOG")${SHOT:+; $(basename "$SHOT")}"; }
 if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
-    if [ -n "$FIRST_ERR" ]; then emit CRASH "$FIRST_ERR"; else emit NOLOG "no 'PS4WINE $MS' line in $(basename "$LOG")"; fi
+    # d1 records each stage as it ends ("PW_D1 stage=<name> ..."): name the ones that arrived.
+    STAGES=""
+    if [ "$MS" = d1 ]; then
+        STAGES="$(grep -oE 'PW_D1 stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_D1 stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
+        STAGES="; stage records: ${STAGES:-none}"
+    fi
+    if [ -n "$FIRST_ERR" ]; then emit CRASH "$FIRST_ERR$STAGES"; else emit NOLOG "no 'PS4WINE $MS' line in $(basename "$LOG")$STAGES"; fi
     exit 1
 fi
 
@@ -64,10 +75,11 @@ declare -A F=()
 for kv in $LINE; do case "$kv" in *=*) F["${kv%%=*}"]="${kv#*=}" ;; esac; done
 [ -n "${F[build]:-}" ] && BID="${F[build]}"
 FAILS=()
-req() { # req KEY OP VALUE   OP: ge le eq
+req() { # req KEY OP VALUE   OP: ge le eq in (VALUE: a comma list)
     local k="$1" op="$2" want="$3" have="${F[$1]:-}"
     if [ -z "$have" ]; then FAILS+=("$k missing"); return; fi
     case "$op" in
+        in) [[ ",$want," == *",$have,"* ]] || FAILS+=("$k=$have not in {$want}") ;;
         ge) [ "${have%%.*}" -ge "$want" ] 2>/dev/null || FAILS+=("$k=$have < $want") ;;
         le) [ "${have%%.*}" -le "$want" ] 2>/dev/null || FAILS+=("$k=$have > $want") ;;
         eq) [ "$have" = "$want" ] || FAILS+=("$k=$have != $want") ;;
@@ -83,6 +95,8 @@ case "$MS" in
     c) word hello.exe; req server eq inprocess; req exit eq 0
        [[ "$LINE" == *'stdout="Hello from PE64"'* ]] || FAILS+=("stdout mismatch") ;;
     d) word winemine; req frames ge 600; req inputs ge 10; req refused eq 0; req board_opened eq 1 ;;
+    d1) req bind in import,thunk; req videoout eq ok; req fb eq ok; req hello eq ok
+        HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
        HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;

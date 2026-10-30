@@ -1,0 +1,6 @@
+# synthetic fixture, written before the first d1 launch (format of logs.sh: HH:MM:SS N|K text)
+14:50:01 N PW_D1 start stages=0/9 stopped=- launches=1 resumed=- file=/data/ps4-wine/d1/progress.txt
+14:50:01 N PW_D1 stage=bind_early early_load=0x80020002 order_needed=1
+14:50:01 N PW_D1 stage=bind_lib lib=ok lib_load=ok lib_desc=1
+14:50:01 N PW_D1 stage=bind_import import=ok import_slots=bound import_after=bound import_load=ok
+14:50:01 N PW_D1 stage=bind_thunk thunk=ok thunk_missing=0

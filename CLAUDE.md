@@ -107,7 +107,13 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   loader runs neither its constructors nor `module_start`: link it `-pie
   --export-dynamic -e module_start` with the SDK's `link.x`, a global
   `module_start` and a writable module-param block (no crtlib.o), and call
-  `module_start` yourself. A PT_LOAD that starts mid-page is ENOEXEC
+  `module_start` yourself. One app PRX imports from another through the loader
+  (functions and data, bound at load, measured in d1) if the exporter is
+  already loaded (the loader does not load a NEEDED app module itself) and the
+  names agree: exporter linked `-soname NAME.so` and converted with
+  `create-fself -libname=NAME`, importer linked against a stub with that soname
+  (`tools/orbis_import_stub.py`). libkernel also exports `dlopen`/`dlsym`/`dlclose`.
+  A PT_LOAD that starts mid-page is ENOEXEC
   (`--no-rosegment`, 16 KiB pages). Each PRX has its own musl: `environ` and
   `stderr` are per module.
 - `libc.a` has a 16-bit `wchar_t` (`wmem*` wrong for 4 bytes), `secure_getenv`

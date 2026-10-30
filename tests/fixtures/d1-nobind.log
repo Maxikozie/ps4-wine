@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first d1 launch (format of logs.sh: HH:MM:SS N|K text)
+14:50:08 N PS4WINE d1 bind=none lib=ok import=fail import_slots=zero order_needed=1 data=fail thunk=fail w32u_load=ok w32u_bound=0/89 w32u_zero=89 videoout=ok fb=ok flip_hz=59.9 pad=ok pad_cross=0 pad_bytes=120 hello=ok build=abc1234+dirty stages=9/9 stopped=- launches=1 resumed=- session_s=8

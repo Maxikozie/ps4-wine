@@ -1,0 +1,8 @@
+# synthetic fixture, written before the first d1 launch (format of logs.sh: HH:MM:SS N|K text)
+14:50:01 N PW_D1 start stages=0/9 stopped=- launches=1 resumed=- file=/data/ps4-wine/d1/progress.txt
+14:50:01 N PW_D1 stage=bind_early early_load=0x80020002 order_needed=1
+14:50:01 N PW_D1 stage=bind_lib lib=ok lib_load=ok lib_desc=1
+14:50:01 N PW_D1 stage=bind_import import=ok import_slots=bound import_after=bound import_load=ok
+14:50:01 N PW_D1 stage=bind_thunk thunk=ok thunk_missing=0
+14:50:20 N PW_D1 stage=videoout hang limit=15s
+14:50:20 N PS4WINE d1 bind=import lib=ok import=ok import_slots=bound order_needed=1 data=ok thunk=ok w32u_load=ok w32u_bound=89/89 w32u_zero=0 videoout=hang fb=hang flip_hz=hang pad=- pad_cross=- pad_bytes=- hello=- build=abc1234+dirty stages=6/9 stopped=videoout:hang launches=1 resumed=- session_s=20

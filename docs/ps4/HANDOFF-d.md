@@ -2,8 +2,8 @@
 
 Written 2026-10-30. Read `CLAUDE.md`, `HANDOFF-c.md` (how c was reached), then this. The plan
 splits d into five sub-steps, riskiest first. Each has its own `PS4WINE dN` line and its own
-`check.sh dN` rule. The milestone's own rule (`check.sh d`) is the last of them. No console run
-for d has happened yet.
+`check.sh dN` rule. The milestone's own rule (`check.sh d`) is the last of them. **d1 passed on
+its first launch (2026-10-30 14:45); d2 is next.**
 
 ## Cleanup after c (done 2026-10-30, fork branch `orbis`, uncommitted)
 
@@ -61,28 +61,63 @@ adds one LOG.md line, which names every `PS4WINE` line the launch emitted.
 
 ### d1: cross-PRX binding, plus VideoOut, the c regression and a DS4 probe in the same launch
 
-**Two-PRX test** (fork `native/orbis/`, built like `pw_probe_mod`):
-- `pw_bind_lib.prx` exports two functions and one data object.
-- **Method A, loader imports.** `pw_bind_use.prx` imports the functions through the loader:
-  `create-fself -library-path` against the lib's export library; ntdll.oelf already carries
-  `DT_SCE_EXPORT_LIB ntdll`. It is loaded both before the lib (does the loader resolve a NEEDED
-  PRX itself?) and after it.
-- **Data import, kept separate.** `pw_bind_data.prx` imports the data object. It loads last under
-  the fault handler, with a progress file, so a fault costs only that stage.
-- **Method B, thunk table: the fallback that needs no loader support.**
-  - `tools/gen_prx_imports.py` gives each sibling-PRX import a `jmp *slot(%rip)` stub.
-  - An exported `pw_prx_bind_imports(resolver)` fills the slots from the exporter's PRXDESC1
-    table (`pw_prx_lookup`).
-  - It refuses data imports at build time.
-  - `pw_bind_thunk.prx` exercises it. It has a host test.
+**PASSED 2026-10-30 14:45 on the first launch** (LOG.md, `logs/20261030-144218-d1.log`):
+`bind=import`, every stage ended, `hello=ok`, framebuffer pixels exact.
+- **Decision: method A** (loader imports) for win32u and the later PRXs. Method B stays built and
+  tested as the fallback.
+- **Load order is the caller's job:** the loader does not load a NEEDED app module by itself
+  (`early_autoload=0`).
+- **Data imports bind on the PS4** (unlike the PS5's FW 12.02); the build still refuses them for
+  win32u.
+- **Open for d2: win32u's `dlsym` slot was `other`, not equal to `sceKernelDlsym(ntdll, "dlsym")`.**
+  libkernel exports `dlsym`, `dlopen` and `dlclose` too, so either the slot or the look-up took
+  libkernel's. Log the slot value with `module+offset` and compare it with ntdll's descriptor entry
+  for `dlsym` before patch 0400's `dlsym(RTLD_DEFAULT, "pw_wine_present")` is relied on.
 
-**At scale.**
-- `win32u.prx` is built with method A against `ntdll.oelf`. `dlsym`, `dlopen` and the `malloc`
-  family become ntdll imports instead of static copies.
-- The build writes `win32u.bind.txt` (symbol and GOT offset).
-- The title loads win32u.prx after ntdll.prx, without `module_start`, and compares every GOT slot
-  with ntdll's descriptor. That gives `w32u_bound=N/78`, which catches wrong NIDs: the PS5's runs
-  8–10 had every import 0.
+**How a PRX imports from another app PRX** (measured on the host, `create-fself`):
+- create-fself opens each NEEDED soname as a file in `-library-path` and reads its ELF symbols.
+- It names the import module and library after the NEEDED soname less `.so`. It names an
+  exporter's own module and library after `-libname`, or the input file stem without it. Before
+  d1, ntdll called itself `ntdll.shared`, so nothing could import from `ntdll`.
+- So every Orbis PRX is now linked `-soname NAME.so` and converted with `-libname=NAME`
+  (`build_wine_orbis.sh`, `build_native_orbis.sh`). The importer's NEEDED is then `ntdll.prx`,
+  and module and library are `ntdll` on both sides.
+
+**Two-PRX test** (fork `native/orbis/pw_bind_*.c`, built by `build_native_orbis.sh`):
+- `pw_bind_lib.prx` exports `pw_bind_add`, `pw_bind_name`, `pw_bind_calls` and the data object
+  `pw_bind_counter`.
+- **Method A, loader imports.** `pw_bind_use.prx` and `pw_bind_early.prx` (one source) import the
+  two functions.
+  - They are linked against a stub from `tools/orbis_import_stub.py`.
+  - `tools/orbis_bind_table.py` writes their slot tables (`*.bind.txt`: offset, kind, exporter,
+    symbol).
+- **Data import.** `pw_bind_data.prx` takes `pw_bind_counter` through a `GLOB_DAT` GOT slot
+  (`-fPIC`; the build refuses a copy relocation).
+- **Method B, thunk table: the fallback that needs no loader support.**
+  - `tools/gen_prx_imports.py` gives each name a `jmp *slot(%rip)` thunk.
+  - An exported `pw_prx_bind_imports(resolver)` fills the slots.
+  - `pw_bind_thunk.prx` has no loader import of the lib at all, and the build checks that.
+- **Host tests** in `make test`: `test_orbis_prx_imports.py` and `test_gen_prx_imports.py`.
+
+**At scale: win32u.prx** (built for the first time; it was "NOT BUILT" since c):
+- **An explicit import set.** Linking against ntdll's whole dynamic table also bound win32u's
+  static musl to ntdll's `__musl_current_locale` (a `TPOFF64` TLS import) and `__tls_get_addr`.
+  So `orbis_import_stub.py` gives win32u only:
+  - what a first link leaves unresolved and no SDK stub provides (Wine's 78 symbols, the
+    exporter's `__wrap_*` hooks);
+  - plus the `dl*` and malloc families on purpose.
+  Data and TLS symbols are refused. Result: 89 slots from ntdll, all `JUMP_SLOT`, no data or TLS
+  imports, 0 unbound in `report.json`.
+- **The wraps.** win32u is linked with ntdll's `exit`/`write`/`dup`/`fcntl`/`pipe` wraps, so its
+  `__wrap_*` calls are ntdll's (a title may not exit, and fd 2 goes to the title's sink).
+- **The slot table.** The build writes `win32u.bind.txt`. The title loads ntdll.prx and
+  win32u.prx, then compares each slot with `sceKernelDlsym(ntdll, name)`:
+  - `bound`: equal;
+  - `zero`;
+  - `lazy`: still a PLT address inside win32u;
+  - `other`;
+  - `nosym`: the look-up fails.
+  That gives `w32u_bound=N/89` and catches wrong NIDs: the PS5's runs 8–10 had every import 0.
 
 **Title side, same launch:**
 - `native/orbis/pw_videoout_orbis.c`: two linear 1920×1080 buffers in Garlic direct memory,
@@ -93,20 +128,94 @@ adds one LOG.md line, which names every `PS4WINE` line the launch emitted.
   user presses it).
 - Then `hello.exe` as in c.
 
-**Line:**
+**Stages and the progress file.** The d1 launch is a fixed sequence of stages. A crash or hang in
+one stage must not lose the results of the others.
+
+- **Order:**
+
+  | # | Stage | Time limit |
+  |---|---|---|
+  | 1 | `bind_early` (an importer loaded before its exporter) | 10 s |
+  | 2 | `bind_lib` | 10 s |
+  | 3 | `bind_import` (slots before and after the first call) | 10 s |
+  | 4 | `bind_thunk` | 10 s |
+  | 5 | `bind_data` | 10 s |
+  | 6 | `w32u_bind` | 20 s |
+  | 7 | `videoout` | 15 s |
+  | 8 | `pad` (waits up to 10 s for cross) | 15 s |
+  | 9 | `hello` | 180 s, the c watchdog from this stage's start |
+
+  The bind tests come first. "Before the exporter" can only be tested before anything loads
+  `pw_bind_lib`, so `bind_early` is first; it never calls through its slots.
+  - `bind_import` does not call when a slot is 0. It reports `import_slots=zero` instead of
+    faulting.
+  - The data import, which faults on the PS5, runs after every function-import stage.
+  - win32u's 89 slots run after the small test.
+  - Each stage loads `pw_bind_lib` itself if needed, because a resumed launch is a new process.
+- **Progress file** `/data/ps4-wine/d1/progress.txt`, separate from the a-probe's. Every line is
+  written and `fsync`ed before the next step:
+  - `B:<stage>` before the stage;
+  - `R:<stage> key=value ...` with its result fields;
+  - `E:<stage>` after it.
+  Each `R:` line also goes out at once on netlog and klog as `PW_D1 stage=<stage> ...`. That
+  prefix never matches `check.sh`'s `PS4WINE d1 ` grep, so `logs.sh` has every finished stage
+  even if the launch dies next.
+- **Fault inside a stage.** Stages 1–8 are title code and loader calls, run under the title's
+  fault handler.
+  - A fault there writes `F:<stage> sig= addr= rip=<module+offset>`, records the stage's fields
+    as `fault`, and `siglongjmp`s back to the runner, which goes on with the next stage.
+  - This works only with stack left: there is no `sigaltstack`, so a stack overflow is not
+    caught.
+  - A second fault while recovering stops the recovery. So does a kernel kill no handler sees
+    (SIGSYS, CE-34878-0).
+  - In both cases the `B:` without an `E:` is the record.
+- **Hang.** A watchdog thread checks the current stage's deadline.
+  - On overrun it writes `H:<stage>`, emits the d1 line with what is known (`stopped=<stage>:hang`),
+    and the title idles. A stuck thread cannot be ended on this kernel, and `exit` is
+    CE-34878-0.
+  - `hello` keeps c's watchdog and fault paths. Wine installs its own handlers, so that stage
+    does not recover.
+- **Relaunch resumes.**
+  - At start the runner reads the progress file.
+  - A stage with `E:` is not run again; its `R:` fields are reused.
+  - A stage with `B:` and no `E:` is recorded as `crash` (or `hang` after an `H:`) and skipped.
+  - The rest run.
+  - The line then carries `launches=N` and `resumed=<stages taken from the file>`.
+- **New cycle.** Once the d1 line has gone out with every stage ended, crashed or skipped, the file
+  is renamed to `progress.last`. It stays readable over FTP, and the next launch starts a fresh
+  cycle. Deleting `progress.txt` over FTP also forces one.
+- **The fork's own code.** The runner is new code in `native/orbis/pw_stage_orbis.{c,h}`, written
+  for the fork. It takes the a-probe's idea and console facts (fsync'd results on `/data` survive
+  a crash), not its code: `probes/probe.c` is GPL-3.0 from nx-on-orbis.
+- **Host test.** File access goes through a small ops table, so the fork can host-test it
+  (`tests/test_pw_stage_orbis.c` in `make test`): fresh cycle, resume after a `B:` without `E:`,
+  `H:` and `F:` records, a torn last line, rename on completion.
+- **The c line still comes out.** The `hello` stage emits c's `PS4WINE c` line as before. The d1
+  line follows it; at a stop it comes alone.
+
+**Line** (once per launch, at the end or at a stop):
 ```
-PS4WINE d1 bind=import|thunk|none lib=ok import=ok|fail|- order_needed=0|1 data=ok|fault|- thunk=ok|fail w32u_load=<status> w32u_bound=N/78 videoout=ok fb=ok hello=ok pad=ok|none pad_cross=0|1
+PS4WINE d1 bind=import|thunk|none lib= import= import_slots=bound|lazy|zero|mixed order_needed=0|1 data= thunk= w32u_load= w32u_bound=N/89 w32u_zero=N videoout= fb= flip_hz= pad=ok|none pad_cross=0|1 pad_bytes=N hello=ok|<c exit> build= stages=<ended>/9 stopped=-|<stage>:crash|hang,... launches=N resumed=-|<stage>,... session_s=N
 ```
+Each stage field is its result, or `fault` (recovered in this launch), `crash` (lost in an
+earlier launch), `hang`, or `-` (not reached). Every stage's full fields are in its
+`PW_D1 stage=` record, and its sub-steps in `PW_D1 step` records (netlog only).
 
 **Rule:**
 - `bind` is `import` or `thunk`;
 - `videoout=ok`, `fb=ok`, `hello=ok`;
 - `--fb` pixels `960,540 = 0,255,0` and `240,135 = 255,128,0`.
-- Pad fields are recorded, not gated.
+- Pad fields are recorded, not gated. So are `data`, `order_needed`, `stopped` and `resumed`.
+- **Several launches.** The gate can pass on a resumed launch. Each launch still gets its own
+  LOG.md line, and a resumed one says which stages came from the file and from which earlier
+  launch.
 
 **Decision:**
-- Keep method A if `w32u_bound=78/78` and the import works.
+- Keep method A if `w32u_bound=89/89` and the import works.
 - Otherwise use method B for win32u (and later winevulkan).
+- If `import` fails because the loader cannot find `pw_bind_lib.prx` (load error, `order_needed=1`)
+  while the lib is loaded, the next hypothesis is the loader's search path. Put the PRXs in the
+  package's `sce_module/` too and launch again: one more launch, no code change.
 - Last resort: win32u linked statically into ntdll.prx (not built).
 
 ### d2: win32u inside Wine, offscreen GDI, the user driver installs
@@ -177,18 +286,25 @@ pixel rules.
 
 ## Tooling the sub-steps need
 
-- **`check.sh`:**
-  - `d1`–`d5` as milestone ids. The grep is already `PS4WINE $MS `, and logs are `logs/*-d1.log`
-    and so on.
-  - An `in` op for `bind`.
-  - `HAS_PIXEL` for d1, d4 and d.
-- **`check_d_test.sh`:** `tests/check_d_test.sh` with `tests/fixtures/d1-*.log` … `d-*.log`
-  (pass, fail and nolog cases, plus the generated PNGs `check_b_test.sh` uses), wired into
-  `build.sh probe-test`.
-- **Build scripts:**
-  - `build_native_orbis.sh` links `-lSceVideoOut -lScePad` and builds the four bind PRXs.
-  - `runtime.sh` stages them, plus `win32u.prx`, `libfreetype.prx` and the fonts, and verifies
-    their sizes in `--prx-only`.
+**Done for d1:**
+- **`check.sh`:** `d1`–`d5` as ids (d2–d5 exit 2 until their rules exist), an `in` op, and d1's
+  `--fb` pixels. With no d1 line, NOLOG or CRASH lists the `PW_D1 stage=` records that arrived.
+- **`tests/check_d_test.sh`** in `build.sh probe-test`, with seven synthetic
+  `tests/fixtures/d1-*.log`:
+  - pass;
+  - a recovered `bind_data` fault that still passes;
+  - a resumed launch (`launches=2`) that passes;
+  - a `videoout` hang, which fails on `fb`;
+  - no binding method;
+  - stage records only (NOLOG);
+  - a crash.
+  The pixel cases are checked on generated RGBA and BGRA dumps.
+- **`build_native_orbis.sh`** links `-lSceVideoOut -lScePad` and builds the five bind PRXs and
+  their slot tables.
+- **`runtime.sh`** stages the bind PRXs, the `*.bind.txt` tables and `win32u.prx`, and uploads
+  and verifies them in `--prx-only`.
+
+**Later:** `libfreetype.prx` and the fonts (d3), the d4 pixel rules, d's `--fb` pixels.
 
 ## Not tested by d
 

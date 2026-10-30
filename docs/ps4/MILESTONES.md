@@ -92,7 +92,7 @@ riskiest first, each with its own `check.sh` rule (details and line formats in
 
 | Step | What | Rule |
 |---|---|---|
-| d1 | Cross-PRX binding: a two-PRX test (loader imports, data import, generated thunk table) and win32u.prx's 78 ntdll imports checked slot by slot; in the same launch, the title's linear VideoOut test pattern, the DS4 probe and `hello.exe` (c regression) | `PS4WINE d1 bind=import\|thunk videoout=ok fb=ok hello=ok` and `--fb` 960,540 = 0,255,0, 240,135 = 255,128,0 |
+| d1 | Cross-PRX binding: a two-PRX test (loader imports, data import, generated thunk table) and win32u.prx's 78 ntdll imports checked slot by slot; in the same launch, the title's linear VideoOut test pattern, the DS4 probe and `hello.exe` (c regression). Separate stages in that order (bind stages first), each result fsync'd to `/data/ps4-wine/d1/progress.txt` and logged before the next stage; a faulting stage is recovered or, after a crash, skipped on relaunch | `PS4WINE d1 bind=import\|thunk videoout=ok fb=ok hello=ok` and `--fb` 960,540 = 0,255,0, 240,135 = 255,128,0 |
 | d2 | win32u inside Wine: user driver installed, offscreen GDI from `gdi64.exe`, frames reach the title's sink | `PS4WINE d2 gdi win32u=ok pixel=ff8000 exit=0` |
 | d3 | FreeType (`libfreetype.prx`) and Wine's fonts in the prefix | `PS4WINE d3 fonts n>=13 tahoma=1 text_px>=50 exit=0` |
 | d4 | winemine on screen, scripted click opens the board | `PS4WINE d4 winemine frames>=600 board_opened=1 refused=0 fb=ok` and `--fb` board pixels taken from the host reference run before the console run |

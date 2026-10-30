@@ -1,0 +1,13 @@
+# synthetic fixture, written before the first d1 launch (format of logs.sh: HH:MM:SS N|K text)
+14:50:01 N PW_D1 start stages=0/9 stopped=- launches=1 resumed=- file=/data/ps4-wine/d1/progress.txt
+14:50:01 N PW_D1 stage=bind_early early_load=0x80020002 order_needed=1
+14:50:01 N PW_D1 stage=bind_lib lib=ok lib_load=ok lib_desc=1
+14:50:01 N PW_D1 stage=bind_import import=ok import_slots=bound import_after=bound import_load=ok
+14:50:01 N PW_D1 stage=bind_thunk thunk=ok thunk_missing=0
+14:50:02 N PW_D1 stage=bind_data data=ok data_slots=bound data_value=1002
+14:50:02 N PW_D1 stage=w32u_bind w32u_load=ok w32u_bound=89/89 w32u_zero=0 w32u_lazy=0 w32u_other=0 w32u_nosym=0 w32u_first=- w32u_init=1
+14:50:04 N PW_D1 stage=videoout videoout=ok flips=120 flip_hz=59.9 fb=ok
+14:50:06 N PW_D1 stage=pad pad=ok pad_cross=1 pad_bytes=120 pad_connected=1 pad_buttons=0x4000 pad_reads=80 pad_read_errors=0 pad_user=0x10000000
+14:50:08 N PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234+dirty load=0 stage=9 kind=exit session_s=1
+14:50:08 N PW_D1 stage=hello hello=ok
+14:50:08 N PS4WINE d1 bind=import lib=ok import=ok import_slots=bound order_needed=1 data=ok thunk=ok w32u_load=ok w32u_bound=89/89 w32u_zero=0 videoout=ok fb=ok flip_hz=59.9 pad=ok pad_cross=1 pad_bytes=120 hello=ok build=abc1234+dirty stages=9/9 stopped=- launches=1 resumed=- session_s=8
