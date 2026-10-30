@@ -13,6 +13,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      port needs; exit 1 if a required one is missing
   compat             orbis-compat -> build/orbis-compat (+ build/orbis-compat-stage)  (milestone a)
   mesa               mesa-ps4 RADV + patches/mesa-ps4/*.patch -> build/mesa-ps4/src/amd/vulkan/libvulkan_radeon.a
+                     (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
   probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh a and b
@@ -21,11 +22,12 @@ usage: scripts/ps4/build.sh --check-toolchain
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
                      the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
+                     and libvulkan.prx from build.sh mesa --prx                               (milestone e)
   title              the ps4-wine title: the fork's native/orbis -> build/title/eboot.elf
                      -> dist/ps4-wine-<id>.pkg (title $TITLE_ID; the runtime is uploaded
                      separately by scripts/ps4/runtime.sh)                               (milestone c)
   all                wine + title
-  Options after the target: --jobs N (wine), --skip-host (wine: the Orbis side only)
+  Options after the target: --jobs N (wine), --skip-host (wine: the Orbis side only), --prx (mesa)
 USAGE
 }
 
@@ -130,9 +132,17 @@ mesa_patch() {
 # mesa-ps4's RADV + zink/EGL, configured as build-support/orbis/build.sh does but
 # without nix (Mesa's host deps come from apt) and out of the reference tree: we
 # build a local clone at $MESA_PS4_COMMIT in a separate meson build directory.
+# --prx builds the copy that goes into libvulkan.prx (milestone e): the same source and options plus
+# -femulated-tls -march=btver2 -fno-omit-frame-pointer. A -pie PRX gets its TLS relaxed to local-exec
+# (offsets into the eboot's block, measured on ntdll.shared.elf), and the SDK's link.x does not collect
+# RADV's .tbss.* sections, so RADV's thread-locals must not be native TLS there; the fork's
+# wine/orbis/pw_emutls_orbis.c provides __emutls_get_address when the PRX is linked.
 # From: orbis-ports/mesa-ps4 build-support/orbis/build.sh @ 1a59cc1 (MIT)
 build_mesa() {
-    local cross="$BUILD_DIR/mesa-cross" head work_sha build_id cross_sha stamp setup=() blog
+    local cross="$BUILD_DIR/mesa-cross" head work_sha build_id cross_sha stamp setup=() blog prx=0 a
+    local MESA_BUILD_DIR="$MESA_BUILD_DIR"
+    for a in "$@"; do case "$a" in --prx) prx=1 ;; *) die "build mesa: unknown option $a" ;; esac; done
+    if [ "$prx" = 1 ]; then cross="$BUILD_DIR/mesa-cross-prx"; MESA_BUILD_DIR="$MESA_PRX_BUILD_DIR"; fi
     [ -f "$ORBIS_COMPAT_STAGE/build/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
     [ -f "$ORBIS_KIT_DIR/cmake/orbis.ini.in" ] || die "no $ORBIS_KIT_DIR/cmake/orbis.ini.in (clone orbis-porting-kit into refs/)"
     need_cmd meson; need_cmd ninja; need_cmd glslangValidator; need_cmd bison; need_cmd flex
@@ -153,6 +163,10 @@ build_mesa() {
         -e "s|@ORBIS_AR@|${ORBIS_AR:-llvm-ar}|g" -e "s|@ORBIS_STRIP@|${ORBIS_STRIP:-llvm-strip}|g" \
         "$ORBIS_KIT_DIR/cmake/orbis.ini.in" > "$cross/orbis.ini"
     grep -q -- "-lorbis-compat" "$cross/orbis.ini" || die "generated cross file has no -lorbis-compat"
+    if [ "$prx" = 1 ]; then
+        sed -i -E "/^(c|cpp)_args/ s/\]\$/,'-femulated-tls','-march=btver2','-fno-omit-frame-pointer']/" "$cross/orbis.ini"
+        [ "$(grep -c "^c.*_args .*'-femulated-tls'" "$cross/orbis.ini")" = 2 ] || die "could not add the PRX flags to $cross/orbis.ini"
+    fi
 
     # Same build id recipe as upstream: commit + hash of the (empty) working diff.
     head="$(git -C "$MESA_SRC_DIR" rev-parse HEAD)"
@@ -193,6 +207,18 @@ build_mesa() {
         die "mesa build failed (ninja exit $rc); see $blog"
     fi
     [ -f "$MESA_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a" ] || die "no libvulkan_radeon.a"
+    if [ "$prx" = 1 ]; then
+        # No native TLS may be left, and the emulated variables must be there. mesa's link probe links an
+        # executable without an emutls runtime, so it does not apply to this copy.
+        local tls
+        tls="$(llvm-objdump -h "$MESA_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a" | grep -cE ' \.t(bss|data)' || true)"
+        [ "$tls" = 0 ] || die "mesa --prx: $tls native TLS sections left in libvulkan_radeon.a"
+        local emu
+        emu="$(llvm-nm "$MESA_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a" 2>/dev/null | grep -c ' __emutls_v\.' || true)"
+        [ "${emu:-0}" -gt 0 ] || die "mesa --prx: no __emutls_v.* symbols; was -femulated-tls applied?"
+        log "mesa --prx: ok ($(stat -c %s "$MESA_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a") bytes, no native TLS, $emu emulated; zlib: $(echo "$MESA_BUILD_DIR"/subprojects/zlib-*/libz.a))"
+        return
+    fi
     log "mesa: link probe"
     ORBIS_COMPAT_DIR="$ORBIS_COMPAT_STAGE" ORBIS_KIT_DIR="$ORBIS_KIT_DIR" \
         "$MESA_SRC_DIR/build-support/orbis/tools/linkprobe.sh" "$MESA_BUILD_DIR" "$OO_PS4_TOOLCHAIN"
@@ -262,6 +288,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_b_test.sh"
     "$REPO_ROOT/tests/check_c_test.sh"
     "$REPO_ROOT/tests/check_d_test.sh"
+    "$REPO_ROOT/tests/check_e_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -341,6 +368,11 @@ build_wine() {
             die "build_host_wine.sh failed; see $BUILD_DIR/wine-host.out"
         tail -n1 "$BUILD_DIR/wine-host.out" >&2
     fi
+    # libvulkan.prx (milestone e) from the -femulated-tls copy of RADV (build.sh mesa --prx).
+    local radv="$MESA_PRX_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a"
+    [ -f "$radv" ] || die "no $radv: scripts/ps4/build.sh mesa --prx (libvulkan.prx needs RADV without native TLS)"
+    export PROSPERO_RADV_ARCHIVE="$radv" PW_VULKAN_INCLUDE="$MESA_SRC_DIR/include"
+    PROSPERO_RADV_ZLIB="$(echo "$MESA_PRX_BUILD_DIR"/subprojects/zlib-*/libz.a)"; export PROSPERO_RADV_ZLIB
     log "wine: Orbis Unix side (.deps/wine-orbis)"
     (cd "$PROSPERO_WIN_DIR" && tools/build_wine_orbis.sh --jobs "$jobs" 2>&1 | tee "$BUILD_DIR/wine-orbis.out" >&2) ||
         die "build_wine_orbis.sh failed; see $BUILD_DIR/wine-orbis.out and .deps/wine-orbis/report.json"
@@ -350,6 +382,7 @@ build_wine() {
 build_title() {
     local out="$BUILD_DIR/title" bid elf
     fork_env
+    export PW_VULKAN_INCLUDE="$MESA_SRC_DIR/include"   # the milestone e stages call libvulkan.prx
     [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
     bid="$(build_id "$PROSPERO_WIN_DIR")"
     log "title: fork build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
@@ -374,7 +407,7 @@ case "$1" in
     -h|--help) usage ;;
     --check-toolchain) check_toolchain ;;
     compat) build_compat ;;
-    mesa) build_mesa ;;
+    mesa) shift; build_mesa "$@" ;;
     probe) build_probe ;;
     probe-test) probe_test ;;
     triangle) build_triangle ;;

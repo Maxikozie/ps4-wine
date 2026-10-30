@@ -42,6 +42,7 @@ MESA_PS4_DIR="${MESA_PS4_DIR:-$REFS_DIR/mesa-ps4}"                 # source (rea
 MESA_PS4_COMMIT="${MESA_PS4_COMMIT:-1a59cc1}"
 MESA_SRC_DIR="${MESA_SRC_DIR:-$BUILD_DIR/src/mesa-ps4}"            # local clone we build in
 MESA_BUILD_DIR="${MESA_BUILD_DIR:-$BUILD_DIR/mesa-ps4}"
+MESA_PRX_BUILD_DIR="${MESA_PRX_BUILD_DIR:-$BUILD_DIR/mesa-ps4-prx}"   # the copy for libvulkan.prx (build.sh mesa --prx)
 PROSPERO_WIN_DIR="${PROSPERO_WIN_DIR:-$REPO_ROOT/third_party/prospero-win}"
 
 # Ubuntu installs LLVM 18 as clang-18 etc.; orbis-compat and mesa call plain

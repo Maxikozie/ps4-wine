@@ -1,0 +1,76 @@
+mesa-ps4 @ 1a59cc1: ORBIS_WSI_SHOT=<n> writes the n-th presented frame of the process, once, to
+ORBIS_WSI_SHOT_PATH (default /data/ps4-wine/shot.raw) as width*4 bytes per row in scan-out order, so
+the milestone e checks can read back what VideoOut flips while DXVK owns the swapchain
+(docs/ps4/MILESTONES.md milestone e; scripts/ps4/fbshot.sh). Applied by scripts/ps4/build.sh mesa.
+
+Copyright (C) 2026 the ps4-wine authors. The change is to MIT-licensed Mesa code and is offered
+under the same MIT terms as the file it patches.
+
+--- a/src/vulkan/wsi/wsi_orbis.c
++++ b/src/vulkan/wsi/wsi_orbis.c
+@@ -9,9 +9,12 @@
+ 
+ #include "wsi_orbis.h"
+ 
++#include <fcntl.h>
+ #include <inttypes.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include "util/log.h"
+ #include "util/os_time.h"
+@@ -588,6 +591,44 @@ wsi_orbis_fail_this_flip(uint64_t flip)
+    return true;
+ }
+ 
++/* ORBIS_WSI_SHOT=<n>: the n-th frame this process presents is written, once, as width*4 bytes per row in
++ * scan-out order (R,G,B,A for A8B8G8R8) to ORBIS_WSI_SHOT_PATH (default /data/ps4-wine/shot.raw), through a
++ * .tmp name, fsync and rename, so a reader never sees half a file. It runs after the GPU wait and the copy,
++ * so it is what the display is about to flip, read back for a check that has no capture device. */
++static void
++wsi_orbis_shot(const struct wsi_orbis_scanout *so, const void *src, uint32_t src_pitch)
++{
++   static uint64_t presents;
++   static bool done;
++   const char *const want = getenv("ORBIS_WSI_SHOT");
++
++   if (want == NULL || done || ++presents < strtoull(want, NULL, 10))
++      return;
++   done = true;
++
++   const char *path = getenv("ORBIS_WSI_SHOT_PATH");
++   char tmp[256];
++   if (path == NULL || path[0] == '\0')
++      path = "/data/ps4-wine/shot.raw";
++   snprintf(tmp, sizeof(tmp), "%s.tmp", path);
++
++   const uint64_t t0 = os_time_get_nano();
++   const size_t row = (size_t)so->width * 4;
++   bool ok = false;
++   int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
++   if (fd >= 0) {
++      ok = true;
++      for (uint32_t y = 0; ok && y < so->height; y++)
++         ok = write(fd, (const uint8_t *)src + (size_t)y * src_pitch, row) == (ssize_t)row;
++      ok = fsync(fd) == 0 && ok;
++      ok = close(fd) == 0 && ok;
++      ok = ok && rename(tmp, path) == 0;
++   }
++   mesa_logi("wsi/orbis: shot of present %llu (%ux%u, pitch %u) -> %s: %s (%llu ms)",
++             (unsigned long long)presents, so->width, so->height, src_pitch, path, ok ? "ok" : "failed",
++             (unsigned long long)((os_time_get_nano() - t0) / 1000000));
++}
++
+ bool
+ wsi_orbis_scanout_present(struct wsi_orbis_scanout *so, uint32_t index, const void *src,
+                           uint32_t src_pitch, uint64_t gpu_seq)
+@@ -730,6 +771,7 @@ wsi_orbis_scanout_present(struct wsi_orbis_scanout *so, uint32_t index, const vo
+       for (uint32_t y = 0; y < so->height; y++)
+          memcpy(dst + (size_t)y * dst_pitch, (const uint8_t *)src + (size_t)y * src_pitch, dst_pitch);
+    }
++   wsi_orbis_shot(so, src, src_pitch);
+ 
+    /* ⚠ IS THE ARTEFACT IN THE IMAGE WE COPY, OR ONLY IN WHAT WE SHOW?
+     *

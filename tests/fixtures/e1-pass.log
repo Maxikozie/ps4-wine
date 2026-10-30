@@ -1,0 +1,10 @@
+# synthetic fixture, written before the first e1 launch (format of logs.sh: HH:MM:SS N|K text)
+17:30:01 N PW_MS start plan=e1 exe=C:\hello.exe stages=0/6 stopped=- launches=1 resumed=- file=/data/ps4-wine/e1/progress.txt
+17:30:02 N PW_MS stage=vk_load vk_load=ok vk_bound=19/19 vk_first=- load_ms=850 vk_kib=40960 flex_before_mib=410 flex_after_mib=370 dmem_load_before_mib=4560 dmem_load_after_mib=4560
+17:30:03 N PW_MS stage=vk_caps inst=ok api=1.3 device=PlayStation_4_Liverpool maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1 exts=194 heap0_mib=661 max_alloc_mib=4095 dmem_before_mib=4560 dmem_after_mib=3536 flex_before_mib=370 flex_after_mib=365 caps_ms=410
+17:30:03 N PW_MS stage=display display=ok
+17:30:03 N PW_MS stage=release release=ok release_rc=0x0
+17:30:10 N PW_MS stage=vk_present present=ok frames=330 gpu_hang=0 swapchain=1920x1080 fmt=37 images=4 fps=59.9 fb=ok reopen=ok reopen_frames=60 counted=1 device_lost=0 last_error=0 dmem_free_mib=3500 flex_free_mib=360
+17:30:12 N PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0 build=abc1234+dirty load=0 stage=9 kind=exit session_s=1
+17:30:12 N PW_MS stage=hello hello=ok
+17:30:12 N PS4WINE e1 vk vk_load=ok vk_bound=19/19 inst=ok api=1.3 device=PlayStation_4_Liverpool maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1 exts=194 heap0_mib=661 max_alloc_mib=4095 display=ok release=ok present=ok frames=330 gpu_hang=0 swapchain=1920x1080 fmt=37 images=4 fps=59.9 fb=ok reopen=ok counted=1 hello=ok vk_first=- load_ms=850 vk_kib=40960 flex_before_mib=410 flex_after_mib=370 dmem_before_mib=4560 dmem_after_mib=3536 dmem_free_mib=3500 flex_free_mib=360 device_lost=0 last_error=0 build=abc1234+dirty stages=6/6 stopped=- launches=1 resumed=- session_s=12

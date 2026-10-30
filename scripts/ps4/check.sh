@@ -9,11 +9,11 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
-  --no-shot    skip the pixel check of the milestones that have one (b, d1, e): a pass is then
+  --no-shot    skip the pixel check of the milestones that have one (b, d1, d2, d4, d, e1, e): a pass is then
                reported as "PASS (no shot)"; the other milestones are unaffected
   --fb         take the pixels from the title's framebuffer readback instead of the HDMI capture:
                requires fb=ok in its PS4WINE line, fetches it with fbshot.sh (or uses --shot FILE,
@@ -25,9 +25,13 @@ Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 2
                 test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
              d2 960,540 = 0,255,0 and 780,410 = 255,128,0 (gdi64.exe's window on the framebuffer);
              d4 640,298 = 255,255,0 (winemine's smiley) and 634,390 = 0,0,0 (the clicked cell, opened).
+             e1 960,540 = 0,255,255 (the title's Vulkan clear) and 240,135 = 255,128,0 (its marker square),
+                from RADV's own readback of the scan-out (ORBIS_WSI_SHOT, patches/mesa-ps4/0002; use --fb).
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
 and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
 scripted click; d5 is milestone d's own rule (check.sh d: the DS4 play after d4's click).
+Sub-steps of e (docs/ps4/HANDOFF-e.md): e1 RADV's libvulkan.prx driven by the title (device, DXVK's
+features, the display handed over, a 1920x1080 swapchain scanned out) + hello.exe.
 USAGE
 }
 
@@ -45,7 +49,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 
 if [ -z "$LOG" ]; then
@@ -63,9 +67,9 @@ LINE="$(grep -E "PS4WINE $MS " "$LOG" | tail -n1 | sed -E 's/^[0-9:]+ [KN] //; s
 emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "$2" "${NOTE:+$NOTE; }$(basename "$LOG")${SHOT:+; $(basename "$SHOT")}"; }
 if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
-    # d1-d3 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
+    # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e1 ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -88,6 +92,12 @@ req() { # req KEY OP VALUE   OP: ge le eq in (VALUE: a comma list)
     esac
 }
 word() { [[ " $LINE " == *" $1 "* ]] || FAILS+=("missing word '$1'"); }
+all() { # all KEY: an "N/M" count with every one of M > 0 (every import slot bound)
+    local have="${F[$1]:-}"
+    if [ -z "$have" ]; then FAILS+=("$1 missing"); return; fi
+    [[ "$have" =~ ^([0-9]+)/([0-9]+)$ ]] && [ "${BASH_REMATCH[2]}" -gt 0 ] && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] ||
+        FAILS+=("$1=$have not all")
+}
 
 PIXELS=(); HAS_PIXEL=0   # "X,Y=R,G,B" rules, all read from one image
 case "$MS" in
@@ -113,6 +123,11 @@ case "$MS" in
         HAS_PIXEL=1; PIXELS=("640,298=255,255,0" "634,390=0,0,0") ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
        HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
+    e1) word vk; req vk_load eq ok; all vk_bound; req inst eq ok; req api eq 1.3; req maintenance5 eq 1; req robustness2 eq 1
+        req gpl eq 1; req dyn_rendering eq 1; req xfb eq 1; req release eq ok; req present eq ok; req frames ge 300
+        req gpu_hang eq 0; req swapchain eq 1920x1080; req fb eq ok; req hello eq ok
+        # The title's own frames through RADV (native/orbis/pw_vk_stage_orbis.h): cyan, the orange square on 240,135.
+        HAS_PIXEL=1; PIXELS=("960,540=0,255,255" "240,135=255,128,0") ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
     g) word hl2; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

@@ -202,6 +202,77 @@ a launch):
 - **One device at a time.** The b title opened RADV in its own image. Here only Wine's process
   does. The `display` stage of the plans must not open VideoOut when the plan hands it to RADV.
 
+## Decisions (2026-10-30, after this hand-off was read)
+
+- **No DXVK d3d11-triangle exists at v2.6.2.** DXVK deleted its d3d11 tests in August 2022 (commit
+  `632e26f68`); the last `test_d3d11_triangle.cpp` was a 1024×600 grey line stress test with no
+  frame count. Decided by the user: our own `d3d11tri64.exe` (fork `tests/wine_d3d11tri64.c`, C,
+  mingw): a 1920×1080 window and swapchain, `D3DCompile` through Wine's builtin `d3dcompiler_47`, a
+  yellow 255,255,0 triangle over a blue 0,0,255 clear, a staging readback printed with its line.
+  It runs under DXVK 2.6.2's release DLLs (the pin in the fork's `tools/pw_install.py`); no DXVK
+  source pin is needed.
+- **Readback (decided by the user):** `patches/mesa-ps4/0002-orbis-wsi-shot.patch`.
+  `ORBIS_WSI_SHOT=<n>` writes the process's n-th scan-out present, once, to `ORBIS_WSI_SHOT_PATH`
+  (the title sets `<root>/shot.raw`) as R,G,B,A rows after the GPU wait, through `.tmp`, fsync and
+  rename. `check.sh eN --fb` reads it: `PASS (framebuffer)`, the HDMI rule stays owed.
+- **No native TLS in libvulkan.prx.** Measured on the host: `ntdll.shared.elf` has a PT_TLS segment
+  and only `%fs:0`-relative local-exec accesses, no TLS dynamic relocation (lld relaxes a `-pie`
+  image's TLS to local-exec, i.e. offsets into the eboot's block). RADV has 7 thread-locals in
+  `.tbss.*` sections, which the SDK's `link.x` does not collect. So `build.sh mesa --prx` builds a
+  second RADV (`build/mesa-ps4-prx`) with `-femulated-tls -march=btver2 -fno-omit-frame-pointer`
+  (7 `__emutls_v.*`, no `.tbss`), and the fork's `wine/orbis/pw_emutls_orbis.c` (own code, host
+  test `test_pw_emutls_orbis`) provides `__emutls_get_address`. Native PRX TLS is not measured.
+- **libvulkan.prx** (`build_wine_orbis.sh`, module `libvulkan` when `PROSPERO_RADV_ARCHIVE` is set):
+  RADV `--whole-archive` + zlib, `wine/orbis/pw_vulkan_radv_orbis.c` (`vkGetInstanceProcAddr`,
+  `vkGetDeviceProcAddr`, a hidden `__dso_handle`, present/submit/swapchain counters exported as
+  `pw_vulkan_stats`: the e lines take frames, the swapchain size and lost devices from there),
+  `pw_wine_setenv` (ntdll's environment is replayed into it), ntdll as the one exporter (19 slots:
+  exit/stdio/dl wraps, malloc family). 25 MB; `report.json` clean. `orbis_prx_report.py`'s raw
+  syscall check now matches the mnemonic only: RADV's `callq <syscall>` (libc's ENOSYS stub, in a
+  futex self-test) is not a raw system call.
+- **Title.** `pw_videoout_orbis_close` closes port 255 and keeps the buffers' direct memory
+  (nx-on-orbis: freeing it after the close rebooted the console). After the hand-over the GDI sink
+  drops frames and counts them (`gdi_dropped`).
+
+### e1: PASSED 2026-10-30 17:29 (second launch; LOG.md)
+
+- **Launch 1 (CRASH)** found two bugs. RADV `strlen`ed `program_invocation_name`, which is NULL in
+  a PRX: only crt startup sets musl's `__progname*`. `libvulkan.prx` now names the process in a
+  constructor. The stage fault recovery then jumped to garbage, because the title's `sigsetjmp`
+  was libkernel's (`libc.a` has none) and its `siglongjmp` musl's. The stages now use musl's
+  `setjmp`/`longjmp`, and `build_native_orbis.sh` refuses a `sigsetjmp` import.
+- **Launch 2 passed.** The title's VideoOut closed, then `wsi_orbis` opened port 255 from the PRX:
+  zero copy, 330 frames at 59.2 fps, counted 330 by libvulkan's counters. A second swapchain
+  reopened the port and presented 60 frames. `hello.exe` then ran beside the live device and the
+  1024 MiB arena. The readback pixels are exact. The user saw cyan with an orange square.
+- **The line was cut at 523 bytes by netlog's datagram size**, so `build=` and `stages=` were lost.
+  It is now shortened to the gated fields plus `fps` and `reopen`; the stage records keep the rest.
+- **Not tested by e1:** HDMI pixels, the Wine-first arena order, winevulkan, win32u's surface,
+  DXVK.
+
+
+Plan `e1` (the title's default, newest), stages in `native/orbis/pw_milestone_orbis.c` and
+`native/orbis/pw_vk_stage_orbis.c`:
+
+| # | Stage | What | Limit |
+|---|---|---|---|
+| 1 | `vk_load` | ntdll started and adopted as the Wine stage does, RADV's variables (`MESA_SHADER_CACHE_DIR=<root>/cache/radv`, `MESA_DISK_CACHE_DATABASE=1`, `ORBIS_WSI_SHOT=300`, `ORBIS_WSI_SHOT_PATH`, then `env.txt`) set in ntdll, a stage exit hook in ntdll; `libvulkan.prx` opened through ntdll's `dlopen("libvulkan.so")`; its 19 slots checked; flexible and direct memory before/after | 30 s |
+| 2 | `vk_caps` | instance (`VK_KHR_surface`, `VK_EXT_headless_surface`, 1.3), first device, b's DXVK feature fields, heaps, max allocation, direct memory around the winsys' arena | 30 s |
+| 3 | `display` | the title's VideoOut, as in d | 15 s |
+| 4 | `release` | `pw_videoout_orbis_close` | 10 s |
+| 5 | `vk_present` | device, headless surface, swapchain 1920×1080 FIFO (4 images, `R8G8B8A8_UNORM` if offered), 330 frames: clear cyan 0,255,255, a 64×64 orange 255,128,0 square on 240,135 copied in as bytes; fence or acquire later than 2 s = `gpu_hang`; then the swapchain destroyed and a second one presenting 60 frames (`reopen`: VideoOut closed and opened again, as DXVK's recreation does); the device stays | 60 s |
+| 6 | `hello` | c regression, Wine starting beside RADV's live device and arena | 180 s |
+
+Line:
+```
+PS4WINE e1 vk vk_load= vk_bound=N/N inst= api= device= maintenance5= robustness2= gpl= dyn_rendering= xfb= exts= heap0_mib= max_alloc_mib= display= release= present= frames= gpu_hang= swapchain= fmt= images= fps= fb= reopen= counted= hello= vk_first= load_ms= vk_kib= flex_before_mib= flex_after_mib= dmem_before_mib= dmem_after_mib= dmem_free_mib= flex_free_mib= device_lost= last_error= build= stages= stopped= launches= resumed= session_s=
+```
+
+Rule (`check.sh e1`, fixed before the first run; `tests/check_e_test.sh`): `vk_load=ok`, `vk_bound` all
+bound, `inst=ok api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1 release=ok
+present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok hello=ok`, and `--fb` 960,540 =
+0,255,255 and 240,135 = 255,128,0. Recorded, not gated: `reopen`, `counted`, the memory fields.
+
 ## Open items carried from d (not blocking e)
 
 - One input-latency spike of 510 ms in a 150 s session (otherwise ≤ 15 ms); cause unknown.
