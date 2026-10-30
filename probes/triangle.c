@@ -6,7 +6,10 @@
  *         build=<id> edyn3=.. desc_idx=.. ... gpu_hang=0 err=-
  *
  * on klog and netlog once frame 300 has been presented, then keeps presenting so the picture stays
- * up for shot.sh. A Vulkan failure or a GPU hang emits the same line with err= set and idles, so
+ * up for shot.sh. Frame 300 is also copied back from its swapchain image and written, as the raw
+ * bytes VideoOut scans out (A8B8G8R8: R first), to /data/ps4-wine/shot.raw for scripts/ps4/fbshot.sh;
+ * fb=ok in the line says the file is this run's. An orange square at ORANGE_X,ORANGE_Y makes the
+ * pixel check sensitive to a red/blue swap, which green alone is not. A Vulkan failure or a GPU hang emits the same line with err= set and idles, so
  * check.sh reads FAIL rather than NOLOG. The full extension list, the heaps and
  * maxMemoryAllocationSize go to netlog only (klog costs 8-15 ms a line). Never returns from main.
  *
@@ -17,6 +20,8 @@
  */
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,6 +41,15 @@
 #define REPORT_FRAME 300      /* about 5 s at 60 Hz */
 #define FPS_FROM     60       /* the first second includes pipeline and WSI warm-up */
 #define FENCE_NS     2000000000ull
+
+/* The orange marker: a 64x64 square centred here, clear of the triangle (x 384..1536, y 216..864 at
+ * 1920x1080). check.sh b expects 255,128,0 at this pixel; swapped red and blue read 0,128,255. */
+#define ORANGE_X     240
+#define ORANGE_Y     135
+#define ORANGE_HALF  32
+
+#define FB_DIR       "/data/ps4-wine"
+#define FB_PATH      FB_DIR "/shot.raw"
 
 static uint64_t t0_us;
 static struct pr_results results;
@@ -206,6 +220,122 @@ static void dump_caps( VkPhysicalDevice phys )
     free( ext );
 }
 
+/* ------------------------------------------------------------------ framebuffer readback */
+struct readback
+{
+    VkDevice device;
+    VkBuffer buf;
+    VkDeviceMemory mem;
+    void *map;
+    VkCommandBuffer cmd;
+};
+
+/* A host-visible, coherent (cached when possible) buffer for one frame, tightly packed. Failures
+ * are recorded in fb= and leave rb->cmd NULL: the readback is evidence, not the gate's frames. */
+static void readback_init( struct readback *rb, VkPhysicalDevice phys, VkDevice device, VkCommandPool pool,
+                           VkExtent2D extent )
+{
+    const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkBufferCreateInfo bci = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = (VkDeviceSize)extent.width * extent.height * 4,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    VkPhysicalDeviceMemoryProperties mp;
+    VkMemoryRequirements req;
+    uint32_t type = UINT32_MAX, i;
+    VkResult r;
+
+    rb->device = device;
+    if ((r = vkCreateBuffer( device, &bci, NULL, &rb->buf )) != VK_SUCCESS) { set_field( "fb", "err:vkCreateBuffer:%d", r ); return; }
+    vkGetBufferMemoryRequirements( device, rb->buf, &req );
+    vkGetPhysicalDeviceMemoryProperties( phys, &mp );
+    for (i = 0; i < mp.memoryTypeCount; i++)
+    {
+        VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+        if (!(req.memoryTypeBits & (1u << i)) || (f & want) != want) continue;
+        if (type == UINT32_MAX || (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) type = i;
+        if (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) break;
+    }
+    if (type == UINT32_MAX) { set_field( "fb", "err:no-host-memory" ); return; }
+    VkMemoryAllocateInfo mai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = req.size, .memoryTypeIndex = type };
+    if ((r = vkAllocateMemory( device, &mai, NULL, &rb->mem )) != VK_SUCCESS) { set_field( "fb", "err:vkAllocateMemory:%d", r ); return; }
+    if ((r = vkBindBufferMemory( device, rb->buf, rb->mem, 0 )) != VK_SUCCESS) { set_field( "fb", "err:vkBindBufferMemory:%d", r ); return; }
+    if ((r = vkMapMemory( device, rb->mem, 0, VK_WHOLE_SIZE, 0, &rb->map )) != VK_SUCCESS) { set_field( "fb", "err:vkMapMemory:%d", r ); return; }
+    VkCommandBufferAllocateInfo cbai = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1,
+    };
+    if ((r = vkAllocateCommandBuffers( device, &cbai, &rb->cmd )) != VK_SUCCESS) { rb->cmd = VK_NULL_HANDLE; set_field( "fb", "err:vkAllocateCommandBuffers:%d", r ); return; }
+    say( "readback buffer %llu bytes in memory type %u", (unsigned long long)req.size, type );
+}
+
+/* Submitted right after the frame's own commands, while the image is still ours (before the
+ * present): PRESENT_SRC -> TRANSFER_SRC, copy, back to PRESENT_SRC, and make the copy host-visible. */
+static void readback_record( struct readback *rb, VkImage image, VkExtent2D extent )
+{
+    VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+    VkImageMemoryBarrier to_src = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image, .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    VkImageMemoryBarrier to_present = to_src;
+    VkBufferMemoryBarrier to_host = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = rb->buf, .offset = 0, .size = VK_WHOLE_SIZE,
+    };
+    VkBufferImageCopy region = {
+        .bufferOffset = 0, .bufferRowLength = 0, .bufferImageHeight = 0,
+        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageExtent = { extent.width, extent.height, 1 },
+    };
+
+    to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_present.dstAccessMask = 0;
+    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    must( vkBeginCommandBuffer( rb->cmd, &bi ), "vkBeginCommandBuffer(readback)" );
+    vkCmdPipelineBarrier( rb->cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                          0, 0, NULL, 0, NULL, 1, &to_src );
+    vkCmdCopyImageToBuffer( rb->cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb->buf, 1, &region );
+    vkCmdPipelineBarrier( rb->cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+                          0, 0, NULL, 1, &to_host, 1, &to_present );
+    must( vkEndCommandBuffer( rb->cmd ), "vkEndCommandBuffer(readback)" );
+}
+
+static void say_pixel( const uint8_t *px, uint32_t width, uint32_t x, uint32_t y, const char *what )
+{
+    const uint8_t *p = px + ((size_t)y * width + x) * 4;
+    say( "fb pixel %u,%u (%s): bytes %u,%u,%u,%u", x, y, what, p[0], p[1], p[2], p[3] );
+}
+
+/* After the frame's fence: the bytes as the copy left them (the swapchain format's byte order; the
+ * scan-out reads them as R,G,B,A), to FB_PATH via a temporary name so a partial file is never fetched. */
+static void readback_save( struct readback *rb, VkExtent2D extent )
+{
+    const size_t len = (size_t)extent.width * extent.height * 4;
+    const uint64_t t = k_process_time();
+    FILE *f;
+    size_t n;
+
+    say_pixel( rb->map, extent.width, extent.width / 2, extent.height / 2, "centre" );
+    say_pixel( rb->map, extent.width, ORANGE_X, ORANGE_Y, "orange" );
+    if (!(f = fopen( FB_PATH ".tmp", "wb" ))) { set_field( "fb", "err:open" ); return; }
+    n = fwrite( rb->map, 1, len, f );
+    fflush( f );
+    fsync( fileno( f ) );
+    fclose( f );
+    if (n != len) { set_field( "fb", "err:short-write:%zu", n ); return; }
+    if (rename( FB_PATH ".tmp", FB_PATH ) != 0) { set_field( "fb", "err:rename" ); return; }
+    set_field( "fb", "ok" );
+    say( "wrote %s: %ux%u, %zu bytes in %.0f ms", FB_PATH, extent.width, extent.height, len,
+         (double)(k_process_time() - t) / 1e3 );
+}
+
 int main( int argc, char **argv )
 {
     (void)argc; (void)argv;
@@ -214,6 +344,10 @@ int main( int argc, char **argv )
     set_field( "gpu_hang", "0" );
     set_field( "err", "-" );
     probe_netlog_init();
+    /* A stale shot from an earlier run must never be fetched as this run's. */
+    mkdir( FB_DIR, 0777 );
+    unlink( FB_PATH );
+    set_field( "fb", "none" );
     say_k( "PS4WINE triangle start build=%s netlog=%s:%d", PROBE_BUILD_ID, PROBE_NETLOG_HOST, PROBE_NETLOG_PORT );
 
     /* ---------------------------------------------------------------- instance */
@@ -291,7 +425,10 @@ int main( int argc, char **argv )
     if (extent.width == UINT32_MAX) { extent.width = 1920; extent.height = 1080; }
     set_field( "swapchain", "%ux%u", extent.width, extent.height );
     set_field( "fmt", "%d", (int)fmt.format );
-    say( "surface %ux%u, %u..%u images", extent.width, extent.height, caps.minImageCount, caps.maxImageCount );
+    say( "surface %ux%u, %u..%u images, usage 0x%x", extent.width, extent.height, caps.minImageCount,
+         caps.maxImageCount, caps.supportedUsageFlags );
+    const int can_read = !!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    if (!can_read) set_field( "fb", "no-transfer-src" );
 
     VkSwapchainCreateInfoKHR sci = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -299,7 +436,7 @@ int main( int argc, char **argv )
         .minImageCount = caps.minImageCount < 2 ? 2 : caps.minImageCount,
         .imageFormat = fmt.format, .imageColorSpace = fmt.colorSpace,
         .imageExtent = extent, .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (can_read ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0),
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = caps.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -422,6 +559,15 @@ int main( int argc, char **argv )
         vkCmdBeginRenderPass( cmds[i], &rpbi, VK_SUBPASS_CONTENTS_INLINE );
         vkCmdBindPipeline( cmds[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline );
         vkCmdDraw( cmds[i], 3, 1, 0, 0 );
+        VkClearAttachment orange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .colorAttachment = 0,
+            .clearValue = { .color = { .float32 = { 1.0f, 0.5f, 0.0f, 1.0f } } },
+        };
+        VkClearRect orange_rect = {
+            .rect = { { ORANGE_X - ORANGE_HALF, ORANGE_Y - ORANGE_HALF }, { 2 * ORANGE_HALF, 2 * ORANGE_HALF } },
+            .baseArrayLayer = 0, .layerCount = 1,
+        };
+        vkCmdClearAttachments( cmds[i], 1, &orange, 1, &orange_rect );
         vkCmdEndRenderPass( cmds[i] );
         must( vkEndCommandBuffer( cmds[i] ), "vkEndCommandBuffer" );
     }
@@ -434,6 +580,9 @@ int main( int argc, char **argv )
     must( vkCreateSemaphore( device, &semci, NULL, &rendered ), "vkCreateSemaphore(rendered)" );
     must( vkCreateFence( device, &fci, NULL, &done ), "vkCreateFence" );
 
+    struct readback rb = { 0 };
+    if (can_read) readback_init( &rb, phys, device, pool, extent );
+
     /* ---------------------------------------------------------------- present, forever */
     say_k( "setup complete, presenting" );
     uint64_t t_from = 0;
@@ -444,10 +593,13 @@ int main( int argc, char **argv )
         if (r == VK_SUBOPTIMAL_KHR) r = VK_SUCCESS;
         must( r, "vkAcquireNextImageKHR" );
         VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const int read_now = rb.cmd && frames + 1 == REPORT_FRAME;
+        VkCommandBuffer frame_cmds[2] = { cmds[idx], rb.cmd };
+        if (read_now) readback_record( &rb, images[idx], extent );
         VkSubmitInfo si = {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .waitSemaphoreCount = 1, .pWaitSemaphores = &acquired, .pWaitDstStageMask = &wait,
-            .commandBufferCount = 1, .pCommandBuffers = &cmds[idx],
+            .commandBufferCount = read_now ? 2 : 1, .pCommandBuffers = frame_cmds,
             .signalSemaphoreCount = 1, .pSignalSemaphores = &rendered,
         };
         must( vkQueueSubmit( queue, 1, &si, done ), "vkQueueSubmit" );
@@ -472,6 +624,7 @@ int main( int argc, char **argv )
         {
             uint64_t dt = k_process_time() - t_from;
             set_field( "fps", "%.1f", dt ? (double)(REPORT_FRAME - FPS_FROM) * 1e6 / (double)dt : 0.0 );
+            if (rb.cmd) readback_save( &rb, extent );
             emit_line();
         }
         else if ((frames & (frames - 1)) == 0 || (frames & 1023) == 0) say( "alive frames=%lu", frames );

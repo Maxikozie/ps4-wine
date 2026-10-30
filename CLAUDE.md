@@ -62,8 +62,9 @@ rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
 | `pkg.sh --elf X` | ELF → fSELF → `.pkg` in the layout that grants ~4.4 GiB direct memory |
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
-| `shot.sh` | one frame from the capture stick; `--pixel X,Y`, `--expect-rgb` |
-| `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line |
+| `shot.sh` | one frame from the capture stick (pinned MJPEG 1920x1080); `--pixel X,Y`, `--expect-rgb` |
+| `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
+| `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
 
 The loop for one console run: `logs.sh --label X &` (klog has no history, so
 start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /

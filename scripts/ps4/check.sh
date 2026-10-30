@@ -9,30 +9,38 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|e|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
   --no-shot    skip the pixel check of the milestones that have one (b, e): a pass is then
                reported as "PASS (no shot)"; the other milestones are unaffected
+  --fb         take the pixels from the title's framebuffer readback instead of the HDMI capture:
+               requires fb=ok in its PS4WINE line, fetches it with fbshot.sh (or uses --shot FILE,
+               a PNG fbshot.sh made), and reports a pass as "PASS (framebuffer)": the rendered frame
+               is checked, the HDMI output is not
   --note TEXT  free text for the last column of the LOG.md line
+Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
+                (orange marker: swapped red and blue fail it); e  960,540 = CHECK_E_RGB.
 USAGE
 }
 
 [ $# -ge 1 ] || { usage; exit 1; }
 MS="$1"; shift
-LOG=""; SHOT=""; NOSHOT=0; NOTE=""
+LOG=""; SHOT=""; NOSHOT=0; FB=0; NOTE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --log) LOG="$2"; shift 2 ;;
         --shot) SHOT="$2"; shift 2 ;;
         --no-shot) NOSHOT=1; shift ;;
+        --fb) FB=1; shift ;;
         --note) NOTE="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) usage; exit 1 ;;
     esac
 done
 case "$MS" in a|b|c|d|e|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+[ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -67,16 +75,16 @@ req() { # req KEY OP VALUE   OP: ge le eq
 }
 word() { [[ " $LINE " == *" $1 "* ]] || FAILS+=("missing word '$1'"); }
 
-PIXEL_RGB=""; HAS_PIXEL=0
+PIXELS=(); HAS_PIXEL=0   # "X,Y=R,G,B" rules, all read from one image
 case "$MS" in
     a) word hello; word ok; req direct_mib ge 4000; req jit eq ok ;;
     b) word triangle; req frames ge 60; req api eq 1.3; req maintenance5 eq 1; req robustness2 eq 1; req gpl eq 1; req dyn_rendering eq 1; req xfb eq 1
-       HAS_PIXEL=1; PIXEL_RGB="${CHECK_B_RGB:-0,255,0}" ;;
+       HAS_PIXEL=1; PIXELS=("960,540=${CHECK_B_RGB:-0,255,0}" "240,135=255,128,0") ;;
     c) word hello.exe; req server eq inprocess; req exit eq 0
        [[ "$LINE" == *'stdout="Hello from PE64"'* ]] || FAILS+=("stdout mismatch") ;;
     d) word winemine; req frames ge 600; req inputs ge 10; req refused eq 0; req board_opened eq 1 ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
-       HAS_PIXEL=1; PIXEL_RGB="${CHECK_E_RGB:-}"; [ -n "$PIXEL_RGB" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
+       HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
     g) word hl2; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
@@ -85,14 +93,27 @@ case "$MS" in
 esac
 
 if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 0 ]; then
-    if [ -n "$SHOT" ]; then PR="$("$SCRIPT_DIR/shot.sh" --in "$SHOT" --pixel 960,540 --expect-rgb "$PIXEL_RGB" --tol "${CHECK_TOL:-60}" || true)"
-    else PR="$("$SCRIPT_DIR/shot.sh" --label "$MS" --pixel 960,540 --expect-rgb "$PIXEL_RGB" --tol "${CHECK_TOL:-60}" || true)"
-         SHOT="$(printf '%s' "$PR" | sed -n 's/.*file=//p' | head -n1)"; fi
-    case "$PR" in *pixel-match*) ;; *) FAILS+=("pixel: ${PR:-no capture}") ;; esac
+    if [ "$FB" = 1 ] && [ "${F[fb]:-}" != ok ]; then
+        FAILS+=("fb=${F[fb]:-missing}: no framebuffer readback from this run"); SHOT=""
+    elif [ -z "$SHOT" ] && [ "$FB" = 1 ]; then
+        SHOT="$("$SCRIPT_DIR/fbshot.sh" --label "$MS" | sed -n 's/^file=//p' || true)"
+        [ -n "$SHOT" ] || FAILS+=("fb: fetching the readback failed")
+    elif [ -z "$SHOT" ]; then
+        SHOT="$LOGS_DIR/$(timestamp)-$MS.png"
+        "$SCRIPT_DIR/shot.sh" --out "$SHOT" || { FAILS+=("pixel: no capture"); SHOT=""; }
+    fi
+    if [ -n "$SHOT" ]; then
+        for rule in "${PIXELS[@]}"; do
+            PR="$("$SCRIPT_DIR/shot.sh" --in "$SHOT" --pixel "${rule%%=*}" --expect-rgb "${rule#*=}" --tol "${CHECK_TOL:-60}" || true)"
+            case "$PR" in *pixel-match*) ;; *) FAILS+=("pixel ${rule%%=*}: $(printf '%s' "${PR:-unreadable}" | sed 's/ file=[^ ]*//' | tr '\n' ' ')") ;; esac
+        done
+    fi
 fi
 
 if [ "${#FAILS[@]}" -eq 0 ]; then
-    if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"; else emit PASS "$LINE"; fi
+    if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"
+    elif [ "$HAS_PIXEL" = 1 ] && [ "$FB" = 1 ]; then emit "PASS (framebuffer)" "$LINE"
+    else emit PASS "$LINE"; fi
     exit 0
 else
     emit FAIL "${FAILS[*]} || $LINE"; exit 1

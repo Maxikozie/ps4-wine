@@ -15,7 +15,7 @@ emitted by the title through klog **and** netlog so either source suffices.
 | # | Milestone | Deliverables | Check (`check.sh <letter>` rule) | Main risk |
 |---|---|---|---|---|
 | a | Toolchain, hello-world PKG, probe | Host tools installed (clang/lld 18, cmake, ninja, meson, mingw-w64 i686+x86_64, glslang, python3, lftp optional); `refs/orbis-porting-kit` cloned (orbsdk is not public as of 2026-10-29); OpenOrbis v0.5.4 at `$OO_PS4_TOOLCHAIN`; orbis-compat and mesa-ps4 built; `probes/probe.c` (the ten questions in ARCHITECTURE §6) packaged with `pkg.sh`, deployed, installed, launched | Log line `PS4WINE a hello ok build=<id> direct_mib=<N> flex_mib=<N> reserve_gib=<N> jit=ok` with `direct_mib >= 4000` and `jit=ok`. The other probe fields (`sysarch=`, `frame_mc=`, `frame_fx=`, `frame_fs=`, `cs32=`, `loadexec=`, `dlsym=`, `cpus=`) are recorded, not gated | Header/ABI mismatches; wrong package layout (768 MiB) |
-| b | Vulkan triangle via mesa-ps4 + capability dump | Title links `libvulkan_radeon.a` + vkloader, draws a triangle through `VK_EXT_headless_surface`, logs `apiVersion` and the extension list | `PS4WINE b triangle frames>=60 api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1` **and** `shot.sh --pixel 960,540 --expect-rgb 0,255,0 --tol 60` (triangle centre is pure green; background black) | A missing DXVK 2.6 requirement → fall back to DXVK 1.10.x |
+| b | Vulkan triangle via mesa-ps4 + capability dump | Title links `libvulkan_radeon.a` + vkloader, draws a triangle through `VK_EXT_headless_surface`, logs `apiVersion` and the extension list | `PS4WINE b triangle frames>=60 api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1` **and** `shot.sh --pixel 960,540 --expect-rgb 0,255,0 --tol 60` (triangle centre is pure green; background black) and `--pixel 240,135 --expect-rgb 255,128,0` (orange marker: swapped red and blue fail it, green alone cannot). Until the capture stick is in use, `check.sh b --fb` reads the same pixels from the title's framebuffer readback and logs `PASS (framebuffer)`, which does not discharge the HDMI pixel rule | A missing DXVK 2.6 requirement → fall back to DXVK 1.10.x |
 | c | Wine core boots a 64-bit console EXE | Submodule `third_party/prospero-win` (fork, branch `orbis`); `build_wine_orbis.sh` produces `ntdll.prx`, `win32u.prx`, `wineserver.prx`; title loads ntdll, in-process server starts, `hello.exe` (PE64, prints to stdout) runs | `PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0` | Signal frame, segment bases, umtx, paths, stacks (the a-probe answers decide the patch constants) |
 | d | winemine / notepad (GDI) with DS4 | User driver + present sink + VideoOut linear path + pad input; a scripted click opens winemine's board; DS4 bindings move the pointer and click | `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1` (`board_opened` = the frame changed after the scripted click at a known cell, compared by the title) | Display path, input delivery, fonts in the prefix |
 | e | 64-bit D3D11 sample via DXVK 2.6.2 | `winevulkan.prx`, `libvulkan.prx`, win32u Vulkan driver on headless surfaces, display hand-over; DXVK's `d3d11-triangle` (x64) presents | `PS4WINE e d3d11 frames>=300 gpu_hang=0 swapchain=1920x1080` **and** `shot.sh --pixel 960,540` within tolerance of the sample's triangle colour | Memory arena sizing, the 2 MiB submission cap, one-display WSI |
@@ -41,7 +41,11 @@ netlog; `shot.sh` finds the capture stick.
 `descriptor_indexing`, `timeline_semaphore`, `buffer_device_address`,
 `custom_border_color`, `depth_clip_enable`), memory heap sizes and
 `maxMemoryAllocationSize`. Keep `conditional_rendering` and
-`draw_indirect_count` disabled in the driver.
+`draw_indirect_count` disabled in the driver (`patches/mesa-ps4/0001`). The
+title (`probes/triangle.c`) also draws a 64x64 orange square centred on 240,135 and, at frame 300,
+copies the presented swapchain image back and writes it to `/data/ps4-wine/shot.raw` (raw bytes in
+VideoOut's A8B8G8R8 scan-out order, `fb=ok` in its line); `scripts/ps4/fbshot.sh` fetches and
+converts it. That checks what the GPU rendered into the scan-out memory, not what leaves the HDMI port.
 
 **c.** Everything in the a-probe that returned a value becomes a constant in
 the Orbis patches (1000–1499). First console run with Wine: expect to iterate
@@ -73,3 +77,24 @@ DXVK's HUD counter mirrored into the `alive` record. Keep the RADV cache on
 kbm` (USB keyboard and mouse), `[runtime] cpu = translator` until f reports
 `native_caps=7`. The 30-minute session is played by the user; `check.sh h`
 reads the session log and the save file over FTP.
+
+## Polish (not gating)
+
+Work a milestone does not depend on. None of these blocks the next milestone; each is picked up
+when the code it touches is next open, or before a build is handed to anyone else.
+
+- **Clean app shutdown.** Closing the triangle from the PS menu gives CE-34878-0 (LOG.md "Known
+  issues": two builds, kernel `gbase_gvmsw_close free_vm_space` error `0x804c0005`). The probe, idle
+  with VideoOut open and the close request unhandled, closes cleanly, so the GPU side (RADV's arena,
+  the GPU VM, queued flips) is the suspect, and releasing it is the part that matters. A title must
+  handle the system's close request instead of being torn down in the middle of its present loop:
+  find out how this firmware delivers that request to an OpenOrbis title (SystemService
+  status/events; to be measured, not assumed), then stop presenting, `vkDeviceWaitIdle`, destroy the
+  swapchain (which unregisters the VideoOut buffers and closes the port in `wsi_orbis.c`), the
+  device and the instance, so RADV's arena and the GPU VM space are released before the process
+  ends. Leaving must not itself be `exit()` or a return from `main()`: that is CE-34878-0 by
+  definition (CLAUDE.md), so measure which exit the system accepts after a close request. Check:
+  close the triangle from the PS menu, no CE-34878-0, and a `PS4WINE b close ok` line on klog.
+  Applies to every title: the Wine title (from c on) owns a VideoOut port and later a Vulkan
+  device too, and needs the same path (`pw_wine_release_display` is a natural place for it). **Not a
+  blocker for c.**

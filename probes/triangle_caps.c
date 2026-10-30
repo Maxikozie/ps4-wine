@@ -16,7 +16,7 @@ const char *const tc_gated_fields[] =
 const char *const tc_recorded_fields[] =
 {
     "edyn3", "desc_idx", "timeline", "bda", "cbc", "dce", "cond_render", "indirect_count",
-    "exts", "heap0_mib", "max_alloc_mib", "swapchain", "fmt", "fps", "gpu_hang", "err", NULL
+    "exts", "heap0_mib", "max_alloc_mib", "swapchain", "fmt", "fps", "gpu_hang", "err", "fb", NULL
 };
 
 int tc_has_ext( const char *const *names, unsigned count, const char *name )
