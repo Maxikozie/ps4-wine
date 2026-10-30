@@ -1,0 +1,5 @@
+# synthetic fixture, written before the first e2 launch (format of logs.sh: HH:MM:SS N|K text)
+18:00:01 N PW_MS start plan=e2 exe=C:\vk64.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/e2/progress.txt
+18:00:02 N PW_MS stage=w32u_bind w32u_load=ok w32u_bound=97/97 w32u_zero=0 w32u_lazy=0 w32u_other=0 w32u_nosym=0 w32u_first=- w32u_dlsym=bound w32u_init=1
+18:00:02 N PW_MS stage=wv_bind wv_load=ok wv_bound=15/15 wv_first=- wv_driver=bound
+18:00:02 N PW_MS stage=display display=ok

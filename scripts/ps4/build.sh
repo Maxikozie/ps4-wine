@@ -359,6 +359,10 @@ build_wine() {
     if [ "$skip_host" = 0 ]; then
         dpkg -s libx11-dev >/dev/null 2>&1 || extra="$extra --without-x"
         dpkg -s libfreetype-dev >/dev/null 2>&1 || extra="$extra --without-freetype"
+        # Vulkan needs only the soname (Wine has its own headers): the host Wine then runs the
+        # milestone e test programs (vk64.exe, DXVK) on the host's driver, lavapipe in the tests.
+        if [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ]; then extra="$extra ac_cv_lib_soname_vulkan=libvulkan.so.1"
+        else log "host wine: no libvulkan.so.1; the milestone e host tests will be skipped"; fi
         [ -z "$extra" ] || log "host wine: headless build (missing packages; setup-host.sh --check-apt):$extra"
         log "wine: host tools tree (Wine 490f6d5, .deps/wine)"
         (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="${extra# }" tools/build_wine_runtime.sh --jobs "$jobs" > "$BUILD_DIR/wine-runtime.out" 2>&1) ||

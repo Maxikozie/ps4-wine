@@ -109,9 +109,9 @@ swapchain. Sub-steps, riskiest first (details and line formats in
 
 | Step | What | Rule |
 |---|---|---|
-| e1 | `libvulkan.prx` (RADV with emulated TLS) opened through ntdll's dlopen and driven by the title: device and DXVK's features, the title's VideoOut closed, a 1920×1080 headless swapchain scanned out by RADV, a second swapchain (VideoOut reopened), then `hello.exe` beside the live device | `PS4WINE e1 vk vk_load=ok vk_bound=N/N inst=ok api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1 release=ok present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok hello=ok` and `--fb` 960,540 = 0,255,255, 240,135 = 255,128,0 |
-| e2 | `winevulkan.prx` (imports from ntdll and win32u) and win32u with Vulkan; `vk64.exe` creates an instance and a device under Wine | fixed before its first run |
-| e3 | win32u's surface on `VK_EXT_headless_surface` with the hand-over through `pw_wine_release_display`; `vk64.exe` clears a Win32 swapchain (same launch as e2) | fixed before its first run |
+| e1 | **Passed 2026-10-30 17:29.** `libvulkan.prx` (RADV with emulated TLS) opened through ntdll's dlopen and driven by the title: device and DXVK's features, the title's VideoOut closed, a 1920×1080 headless swapchain scanned out by RADV, a second swapchain (VideoOut reopened), then `hello.exe` beside the live device | `PS4WINE e1 vk vk_load=ok vk_bound=N/N inst=ok api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1 release=ok present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok hello=ok` and `--fb` 960,540 = 0,255,255, 240,135 = 255,128,0 |
+| e2 | **Passed 2026-10-30 18:00.** `winevulkan.prx` (imports from ntdll and win32u) and win32u with Vulkan; `vk64.exe` creates an instance and a device under Wine | `PS4WINE e2 vk64 inst=ok api=1.3 exts_dxvk=ok dev=ok submit=ok wv_bound=N/N w32u_bound=N/N` |
+| e3 | **Passed 2026-10-30 18:03.** win32u's surface on `VK_EXT_headless_surface` (patch 0461) with the hand-over through `pw_wine_release_display`; `vk64.exe` clears a Win32 swapchain (same launch as e2) | `PS4WINE e3 vkclear release=ok surface=ok present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok` and `--fb` 960,540 = 255,0,0, 240,135 = 0,255,0 |
 | e4 | `d3d11tri64.exe` under DXVK 2.6.2: milestone e's own line | the e rule, `CHECK_E_RGB` from the host reference run |
 
 **f.** Pinball is prospero-win's case study (`docs/CASE_STUDY_PINBALL.md`).

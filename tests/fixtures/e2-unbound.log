@@ -1,0 +1,7 @@
+# synthetic fixture, written before the first e2 launch (format of logs.sh: HH:MM:SS N|K text)
+18:00:01 N PW_MS start plan=e2 exe=C:\vk64.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/e2/progress.txt
+18:00:02 N PW_MS stage=w32u_bind w32u_load=ok w32u_bound=97/97 w32u_zero=0 w32u_lazy=0 w32u_other=0 w32u_nosym=0 w32u_first=- w32u_dlsym=bound w32u_init=1
+18:00:02 N PW_MS stage=wv_bind wv_load=ok wv_bound=14/15 wv_first=__wine_get_vulkan_driver:zero wv_driver=zero
+18:00:02 N PW_MS stage=display display=ok
+18:00:12 K PS4WINE e2 vk64 inst=ok api=1.3 exts_dxvk=ok dev=ok submit=ok wv_bound=14/15 w32u_bound=97/97 wv_driver=bound wv_first=- exts=180 device=PlayStation_4_Liverpool__RADV_ORBIS exit=1 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=11
+18:00:12 K PS4WINE e3 vkclear release=- surface=- present=- frames=0 gpu_hang=0 swapchain=1920x1080 fb=none app_frames=0 app_swapchain=1920x1080 fmt=37 device_lost=0 gdi_dropped=2 display=ok exit=1 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=11

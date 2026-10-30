@@ -19,7 +19,7 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              drive_c/hello.exe, then the extras
   --upload   mirror build/prefix to \$PS4_HOST:$PS4_DATA_ROOT/prefix with lftp, verify sizes
   --extras   into the existing build/prefix: tests/wine_gdi64.c -> drive_c/gdi64.exe (milestone
-             d2/d3), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
+             d2/d3), tests/wine_vk64.c -> drive_c/vk64.exe (e2/e3), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
              win32u finds fonts only there), the MenuHeight check; then put just those files
              (no mirror of the whole prefix)
@@ -44,13 +44,18 @@ PREFIX="$BUILD_DIR/prefix"
 WINE="$PROSPERO_WIN_DIR/.deps/wine-host/install/usr/bin/wine"
 HELLO_SRC="$PROSPERO_WIN_DIR/tests/wine_hello64.c"
 GDI_SRC="$PROSPERO_WIN_DIR/tests/wine_gdi64.c"
+VK64_SRC="$PROSPERO_WIN_DIR/tests/wine_vk64.c"
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
-EXTRA_FILES=(drive_c/gdi64.exe)
+EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe)
 
 # The test programs, the fonts and the registry check; fills EXTRA_FILES.
 add_extras() {
     need_cmd x86_64-w64-mingw32-gcc
     x86_64-w64-mingw32-gcc -O1 -o "$PREFIX/drive_c/gdi64.exe" "$GDI_SRC" -lgdi32 -luser32
+    # Milestone e2/e3's Vulkan program, against mesa-ps4's Khronos headers (mingw ships none).
+    [ -f "$MESA_SRC_DIR/include/vulkan/vulkan.h" ] || die "no Vulkan headers at $MESA_SRC_DIR/include: scripts/ps4/build.sh mesa"
+    x86_64-w64-mingw32-gcc -O1 -Wall -Wextra -Werror -idirafter "$MESA_SRC_DIR/include" -o "$PREFIX/drive_c/vk64.exe" \
+        "$VK64_SRC" -luser32
     ls "$FONTS_SRC"/*.ttf >/dev/null 2>&1 || die "no fonts at $FONTS_SRC: scripts/ps4/build.sh wine"
     mkdir -p "$PREFIX/drive_c/windows/Fonts"
     cp "$FONTS_SRC"/*.ttf "$PREFIX/drive_c/windows/Fonts/"
@@ -62,7 +67,7 @@ add_extras() {
     if [ -n "$menu" ] && { [ "$menu" -lt 0 ] || [ "$menu" -gt 64 ]; }; then
         die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
     fi
-    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
 }
 
 # put FILES... (relative to the prefix) and verify their sizes.

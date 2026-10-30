@@ -109,7 +109,8 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   `module_start` and a writable module-param block (no crtlib.o), and call
   `module_start` yourself. One app PRX imports from another through the loader
   (functions and data, bound at load, measured in d1) if the exporter is
-  already loaded (the loader does not load a NEEDED app module itself) and the
+  already loaded (load it first: d1's "the loader does not load a NEEDED app
+  module itself" came from a name check that never matched, see HANDOFF-e) and the
   names agree: exporter linked `-soname NAME.so` and converted with
   `create-fself -libname=NAME`, importer linked against a stub with that soname
   (`tools/orbis_import_stub.py`). libkernel also exports `dlopen`/`dlsym`/`dlclose`,

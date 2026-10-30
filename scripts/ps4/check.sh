@@ -27,11 +27,14 @@ Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 2
              d4 640,298 = 255,255,0 (winemine's smiley) and 634,390 = 0,0,0 (the clicked cell, opened).
              e1 960,540 = 0,255,255 (the title's Vulkan clear) and 240,135 = 255,128,0 (its marker square),
                 from RADV's own readback of the scan-out (ORBIS_WSI_SHOT, patches/mesa-ps4/0002; use --fb).
+             e3 960,540 = 255,0,0 (vk64.exe's clear) and 240,135 = 0,255,0 (its square), the same readback.
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
 and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
 scripted click; d5 is milestone d's own rule (check.sh d: the DS4 play after d4's click).
 Sub-steps of e (docs/ps4/HANDOFF-e.md): e1 RADV's libvulkan.prx driven by the title (device, DXVK's
-features, the display handed over, a 1920x1080 swapchain scanned out) + hello.exe.
+features, the display handed over, a 1920x1080 swapchain scanned out) + hello.exe; e2 winevulkan
+and Wine's Vulkan, and e3 win32u's surface with the hand-over and a Win32 swapchain, both from one
+vk64.exe launch (check each with the same --log).
 USAGE
 }
 
@@ -49,7 +52,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 
 if [ -z "$LOG" ]; then
@@ -69,7 +72,7 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e1 ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e[123] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -128,6 +131,12 @@ case "$MS" in
         req gpu_hang eq 0; req swapchain eq 1920x1080; req fb eq ok; req hello eq ok
         # The title's own frames through RADV (native/orbis/pw_vk_stage_orbis.h): cyan, the orange square on 240,135.
         HAS_PIXEL=1; PIXELS=("960,540=0,255,255" "240,135=255,128,0") ;;
+    e2) word vk64; req inst eq ok; req api eq 1.3; req exts_dxvk eq ok; req dev eq ok; req submit eq ok
+        all wv_bound; all w32u_bound ;;
+    e3) word vkclear; req release eq ok; req surface eq ok; req present eq ok; req frames ge 300; req gpu_hang eq 0
+        req swapchain eq 1920x1080; req fb eq ok
+        # vk64.exe's frames (tests/wine_vk64.c in the fork): red, the green square on 240,135.
+        HAS_PIXEL=1; PIXELS=("960,540=255,0,0" "240,135=0,255,0") ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
     g) word hl2; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

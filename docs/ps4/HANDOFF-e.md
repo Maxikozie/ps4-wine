@@ -273,6 +273,76 @@ bound, `inst=ok api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1
 present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok hello=ok`, and `--fb` 960,540 =
 0,255,255 and 240,135 = 255,128,0. Recorded, not gated: `reopen`, `counted`, the memory fields.
 
+### e2 + e3: e2 PASSED 2026-10-30 18:00, e3 PASSED 2026-10-30 18:03 (LOG.md)
+
+- **Launch 1:** e2 passed. e3 did everything its rule asks (hand-over, 330 frames, exact pixels),
+  but its counter fields read zero. The title's `module_handle("ntdll")` never matched, because
+  the module list says `ntdll.prx`. The fallback path load fixed it, and `vk_stats=` now names any
+  failed read. The rule is unchanged.
+- **Launch 2:** both lines pass. win32u's surface creation (0461) asked for the display, the title
+  closed VideoOut on its main thread, and RADV opened it zero copy from Wine's process.
+  libvulkan's counters saw 330 presents at 1920×1080. The user saw red with the green square.
+- **Correction to d1:** `module_named` now accepts `NAME.prx`. d1's `early_autoload=0` came from
+  the same failing name comparison, so "the loader does not load a NEEDED app module by itself" is
+  **unmeasured**, not measured. Load order stays the caller's job in practice.
+- **Host tests.** The host Wine is built with Vulkan (`ac_cv_lib_soname_vulkan=libvulkan.so.1`).
+  `.deps/wine-host-drv` was refreshed from it, with win32u rebuilt
+  `-DWINE_PS5_USER_DRIVER -DWINE_PS5_HEADLESS_SURFACE`; no stub is needed now. Its prefix must be
+  updated by the plain *build-tree* Wine: the update stamp is `wine.inf`'s mtime, and wineboot
+  hangs under the driver. On lavapipe, `vk64.exe` passed both lines through 0461.
+
+
+One launch of `C:\vk64.exe` (fork `tests/wine_vk64.c`, put by `prefix.sh --extras`) gives both lines,
+as gdi64.exe gave d2 and d3. Plan `e2` (the title's default, newest):
+
+| # | Stage | What | Limit |
+|---|---|---|---|
+| 1 | `w32u_bind` | win32u's ntdll slots: regression, win32u now has its Vulkan driver (97 slots) | 20 s |
+| 2 | `wv_bind` | `winevulkan.prx`'s slots against **two** exporters: 14 from ntdll, 1 from win32u (`__wine_get_vulkan_driver`), each slot checked against its own exporter by the `.bind.txt` `from` column | 20 s |
+| 3 | `display` | the title's VideoOut, so that the hand-over is real | 15 s |
+| 4 | `vk64` | `vk64.exe` under Wine, 180 s watchdog | |
+
+- **Build.**
+  - Wine is configured with `ac_cv_lib_soname_vulkan=libvulkan.so` (no `--without-vulkan`), and
+    `winevulkan.so` is built and linked by `link_prx winevulkan ... ntdll,win32u`.
+  - `link_prx` and `orbis_import_stub.py` take several exporters in NEEDED priority order, one
+    stub each, `--exporter NAME=ELF`. Host test: two-exporter cases in `test_orbis_prx_imports.py`.
+  - Patch **0461**: under `__ORBIS__` (or `WINE_PS5_HEADLESS_SURFACE` on a host), the PS5 user
+    driver maps `VK_KHR_win32_surface` to `VK_EXT_headless_surface` and creates a headless surface
+    after `pw_wine_release_display`. 0460's display-plane path is unchanged on the PS5.
+- **Title.**
+  - `pw_wine_set_display_release(pw_ms_release_display)`: the port is closed on the title's main
+    thread (`pw_ms_service` in the main loop, request and 5 s wait), as the PS5 title does.
+  - The e plans add `MESA_SHADER_CACHE_DIR`, `MESA_DISK_CACHE_DATABASE=1`, `ORBIS_WSI_SHOT=300`,
+    `ORBIS_WSI_SHOT_PATH` and `WINE_PS5_DESKTOP=1920x1080` to Wine's environment. libvulkan.prx
+    gets them from ntdll when win32u loads it. `env.txt` wins.
+  - The runner keeps the `VK64`/`VK64S` stdout lines (`pw_ms_stdout`).
+  - `frames`, `swapchain` and `device_lost` come from libvulkan's `pw_vulkan_stats`, found through
+    ntdll's `dlsym(NULL, ...)`. vk64.exe's own `frames`, `swapchain` and `hang` become `app_*`.
+- **vk64.exe.**
+  - **e2 half:** an instance with `VK_KHR_win32_surface` and the first device. It reports whether
+    the DXVK set (swapchain, robustness2, transform_feedback, graphics_pipeline_library,
+    extended_dynamic_state3, maintenance5) is visible through winevulkan, then creates a device and
+    runs one empty submit with a fence.
+  - **e3 half:** a 1920×1080 `WS_POPUP` window and its win32 surface, then a swapchain of its size,
+    330 frames (RADV defers presents by one; the shot is the 300th). Each frame is a red clear with
+    a 64×64 green square on 240,135 copied in as bytes.
+  - Host test `test_wine_vk64.py`: the plain host Wine with Vulkan (`build.sh wine` passes
+    `ac_cv_lib_soname_vulkan=libvulkan.so.1` when the host has it), on lavapipe, through the null
+    driver's headless surface.
+
+Lines:
+```
+PS4WINE e2 vk64 inst= api= exts_dxvk= dev= submit= wv_bound=N/N w32u_bound=N/N wv_driver= wv_first= exts= device= exit= build= ...
+PS4WINE e3 vkclear release= surface= present= frames= gpu_hang= swapchain= fb= app_frames= app_swapchain= fmt= device_lost= gdi_dropped= display= exit= build= ...
+```
+
+Rules (fixed before the first run; `tests/check_e_test.sh`):
+- **e2:** `inst=ok api=1.3 exts_dxvk=ok dev=ok submit=ok`, with `wv_bound` and `w32u_bound` all
+  bound.
+- **e3:** `release=ok surface=ok present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok`, and
+  `--fb` 960,540 = 255,0,0 and 240,135 = 0,255,0.
+
 ## Open items carried from d (not blocking e)
 
 - One input-latency spike of 510 ms in a 150 s session (otherwise ≤ 15 ms); cause unknown.
