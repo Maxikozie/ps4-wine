@@ -17,7 +17,7 @@ emitted by the title through klog **and** netlog so either source suffices.
 | a | Toolchain, hello-world PKG, probe | Host tools installed (clang/lld 18, cmake, ninja, meson, mingw-w64 i686+x86_64, glslang, python3, lftp optional); `refs/orbis-porting-kit` cloned (orbsdk is not public as of 2026-10-29); OpenOrbis v0.5.4 at `$OO_PS4_TOOLCHAIN`; orbis-compat and mesa-ps4 built; `probes/probe.c` (the ten questions in ARCHITECTURE §6) packaged with `pkg.sh`, deployed, installed, launched | Log line `PS4WINE a hello ok build=<id> direct_mib=<N> flex_mib=<N> reserve_gib=<N> jit=ok` with `direct_mib >= 4000` and `jit=ok`. The other probe fields (`sysarch=`, `frame_mc=`, `frame_fx=`, `frame_fs=`, `cs32=`, `loadexec=`, `dlsym=`, `cpus=`) are recorded, not gated | Header/ABI mismatches; wrong package layout (768 MiB) |
 | b | Vulkan triangle via mesa-ps4 + capability dump | Title links `libvulkan_radeon.a` + vkloader, draws a triangle through `VK_EXT_headless_surface`, logs `apiVersion` and the extension list | `PS4WINE b triangle frames>=60 api=1.3 maintenance5=1 robustness2=1 gpl=1 dyn_rendering=1 xfb=1` **and** `shot.sh --pixel 960,540 --expect-rgb 0,255,0 --tol 60` (triangle centre is pure green; background black) and `--pixel 240,135 --expect-rgb 255,128,0` (orange marker: swapped red and blue fail it, green alone cannot). Until the capture stick is in use, `check.sh b --fb` reads the same pixels from the title's framebuffer readback and logs `PASS (framebuffer)`, which does not discharge the HDMI pixel rule | A missing DXVK 2.6 requirement → fall back to DXVK 1.10.x |
 | c | Wine core boots a 64-bit console EXE | Submodule `third_party/prospero-win` (fork, branch `orbis`); `build_wine_orbis.sh` produces `ntdll.prx`, `win32u.prx`, `wineserver.prx`; title loads ntdll, in-process server starts, `hello.exe` (PE64, prints to stdout) runs | `PS4WINE c hello.exe stdout="Hello from PE64" server=inprocess exit=0` | Signal frame, segment bases, umtx, paths, stacks (the a-probe answers decide the patch constants) |
-| d | winemine / notepad (GDI) with DS4 | User driver + present sink + VideoOut linear path + pad input; a scripted click opens winemine's board; DS4 bindings move the pointer and click | `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1` (`board_opened` = the frame changed after the scripted click at a known cell, compared by the title) | Display path, input delivery, fonts in the prefix |
+| d | winemine / notepad (GDI) with DS4 | User driver + present sink + VideoOut linear path + pad input; a scripted click opens winemine's board; DS4 bindings move the pointer and click | `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1` (`board_opened` = the frame changed after the scripted click at a known cell, compared by the title) **and** `fb=ok` with d4's board pixels read from the title's framebuffer readback (`check.sh d --fb`; no capture stick). Sub-steps d1–d5 have their own lines, below | Display path, input delivery, fonts in the prefix |
 | e | 64-bit D3D11 sample via DXVK 2.6.2 | `winevulkan.prx`, `libvulkan.prx`, win32u Vulkan driver on headless surfaces, display hand-over; DXVK's `d3d11-triangle` (x64) presents | `PS4WINE e d3d11 frames>=300 gpu_hang=0 swapchain=1920x1080` **and** `shot.sh --pixel 960,540` within tolerance of the sample's triangle colour | Memory arena sizing, the 2 MiB submission cap, one-display WSI |
 | f | 32-bit EXE via translator, then native probe | `wowprospero.dll/.prx`, prefix selects it; Space Cadet Pinball plays; `wow64native` readiness probe reports caps | `PS4WINE f pinball cpu=translator frames>=600 faults_unresolved=0 native_caps=<0..7>`. PASS needs the translator fields only; `native_caps=7` is recorded as a bonus | Executable memory above 4 GiB, SEGV hook, compat-mode selectors |
 | g | 32-bit D3D9 Source game (HL2) with batching | DXVK d3d9 under WoW64, `PW_VK_BATCH=1` + `PW_VK_BATCH_STATS=1`, RADV shader cache on `/data`, keyboard/mouse input | `PS4WINE g hl2 batch=1 crossings_per_frame<=2000 fps_avg>=20 session_s>=300 faults_unresolved=0` (Slim target; a Pro should reach 30) | CPU budget on Jaguar, shader-compile stalls |
@@ -78,13 +78,25 @@ O_NONBLOCK)` and `FIONBIO` refused on AF_UNIX sockets but fine on kernel pipes
 (Wine's pipes are kernel pipes on Orbis now); musl's `getauxval` faulting on a
 NULL aux vector; and a prefix that must keep its system32/syswow64 files.
 Patches 1030/1040 (report and continue) and 1050/1060/1070 (handshake and
-request traces, O_NONBLOCK tolerance) are diagnostic and come out at the start
-of d, keeping only what a fix still needs.
+request traces, O_NONBLOCK tolerance) were diagnostic. They came out at the
+start of d (2026-10-30), and only 1070's `init_thread` fallback stays
+(`docs/ps4/HANDOFF-d.md`).
 
 **d.** The host fixture `tests/wine_ps5_driver_sink.c` in prospero-win proves
-the driver path on a PC first (winemine frames as PPM, scripted click).
+the driver path on a PC first (winemine frames as PPM, scripted click; its
+moves must be relative since patch 0670).
 Fonts must be staged in `drive_c/windows/Fonts` on `/data`; `MenuHeight` must
-not be in `user.reg` from a font-less wineboot (patch 0410).
+not be in `user.reg` from a font-less wineboot (patch 0410). Five sub-steps,
+riskiest first, each with its own `check.sh` rule (details and line formats in
+`docs/ps4/HANDOFF-d.md`):
+
+| Step | What | Rule |
+|---|---|---|
+| d1 | Cross-PRX binding: a two-PRX test (loader imports, data import, generated thunk table) and win32u.prx's 78 ntdll imports checked slot by slot; in the same launch, the title's linear VideoOut test pattern, the DS4 probe and `hello.exe` (c regression) | `PS4WINE d1 bind=import\|thunk videoout=ok fb=ok hello=ok` and `--fb` 960,540 = 0,255,0, 240,135 = 255,128,0 |
+| d2 | win32u inside Wine: user driver installed, offscreen GDI from `gdi64.exe`, frames reach the title's sink | `PS4WINE d2 gdi win32u=ok pixel=ff8000 exit=0` |
+| d3 | FreeType (`libfreetype.prx`) and Wine's fonts in the prefix | `PS4WINE d3 fonts n>=13 tahoma=1 text_px>=50 exit=0` |
+| d4 | winemine on screen, scripted click opens the board | `PS4WINE d4 winemine frames>=600 board_opened=1 refused=0 fb=ok` and `--fb` board pixels taken from the host reference run before the console run |
+| d5 | DS4 drives pointer and buttons: milestone d's own line | the d rule above |
 
 **e.** The title releases VideoOut when Wine creates its first surface. The
 sample must present at 1920×1080 (the one size known to be accepted) before

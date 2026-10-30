@@ -9,7 +9,7 @@ games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
 rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
-`docs/ps4/HANDOFF-c.md` (where milestone c stands), `docs/ps4/LOG.md` (every
+`docs/ps4/HANDOFF-d.md` (where milestone d stands; `HANDOFF-c.md` for how c was reached), `docs/ps4/LOG.md` (every
 console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkouts.
 
 ## Hard rules
