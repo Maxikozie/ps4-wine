@@ -70,7 +70,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | `shot.sh` | one frame from the capture stick (pinned MJPEG 1920x1080); `--pixel X,Y`, `--expect-rgb` |
 | `view.sh` | live view for the user (the "PS4 Capture" menu entry): mpv shows the stick, `pw-loopback` sends its sound to the speakers; holds the stick while open (`--no-audio`, `--sink`, `--device`; `--record FILE` records what it shows, capped by `--record-max`, `--stop-record`; one queued frame, mailbox present) |
 | `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
-| `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
+| `check.sh <a-h, sub-step, pN>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
 | `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
 | `prefix.sh` | `wineboot --init` with the fork's host Wine into `build/prefix` (dosdevices and builtin DLL copies removed, `hello.exe` added), upload to `/data/ps4-wine/prefix` |
 

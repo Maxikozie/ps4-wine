@@ -4,7 +4,75 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-**Status: plan only.** Nothing of p is built, deployed or launched. p1 starts when the user says so.
+## Resume here (2026-11-01 18:06: p1 done)
+
+**p1 passed**: three passing launches of one package (LOG.md 18:00, 18:03, 18:06,
+`ps4-wine-73a9a10+dirty-p1b.pkg`, plan `p1` the title's default, env.txt empty). A first launch at 17:55
+measured the same but FAILed its check: the line lost everything past 512 bytes (below).
+
+Pinball's attract mode, per present, the three launches' averages (p95 in brackets):
+
+| Metric | 18:00 | 18:03 | 18:06 | Spread s |
+|---|---|---|---|---|
+| copy (swizzle + scale) | 12940 µs (13100) | 12945 (13100) | 12939 (13100) | 0.05 % |
+| flip wait | 2813 (4100) | 2481 (4000) | 2813 (4100) | 12.3 % (p95: 2.5 %) |
+| keep (`last_drawn`) | 690 (900) | 1034 (1200) | 690 (900) | 42.7 % |
+| guest | 218 (400) | 211 (400) | 217 (400) | 3.3 % |
+| guest CPU | 225 | 218 | 225 | 3.1 % |
+| frame (entry to entry) | 16682 | 16691 | 16682 | 0.05 % |
+| present (entry to exit) | 16463 | 16479 | 16464 | 0.1 % |
+| presents in 60 s | 3597 | 3595 | 3597 | 0.06 % (0.033 Hz) |
+
+What p1 says:
+- **The copy is the cost.** 12.9 ms of the 16.5 ms present is the swizzle and the 2× scale, every
+  present. The flip wait is what remains of the vblank (2.5-2.8 ms); keep adds 0.7-1.0 ms; the guest
+  needs 0.2 ms. The plan's guess (the copy is the largest cost besides the flip wait) is confirmed:
+  it is the largest cost outright.
+- **59.9 presents/s, every one a surface flush** (`noted` = `flushes` = `presents`), none full-screen,
+  none composed (no pointer drawn). Attract mode changes 850-1200 px per flush on average (max 99824
+  of 518400), and each costs a full 1920x1080 copy. Still unmeasured: how many flushes make one
+  Pinball frame. Every present blocks for a vblank, so 59.9/s is the display's rate, not Pinball's;
+  two flushes per game frame would look the same.
+- **Guest CPU equals guest wall time** (0.22 ms both): the guest does not wait between presents.
+  `getrusage(RUSAGE_THREAD)` from libkernel works; `thread_cpu_other=0` (one presenting thread).
+- **keep is bimodal across launches** (0.69 or 1.03 ms, the same within a launch); cause not measured
+  (where `last_drawn` lands, cache state). It is not gated.
+- **One missed vblank** in 3595 presents at 18:03 (a 17.6 ms flip).
+- **fps 54 in f vs 59.9 here:** f's 54 was hand play, these are attract mode; not compared (by design).
+
+**Built for p1 (uncommitted; the user commits):**
+- Fork:
+  - `native/orbis/pw_hist.{c,h}` (new, title code: the core `src/` formats nothing,
+    `tests/test_native_contract.py`) and `tests/test_pw_hist.c`, in the Makefile and
+    `build_native_orbis.sh`;
+  - `native/orbis/pw_milestone_orbis.{c,h}`: plan `p1`, `p_script`, the per-present timings in
+    `pw_ms_present`, `pw_ms_flush`, `p1_lines`; f's play loop split into `f_play` (p1 runs it after
+    the line);
+  - `native/orbis/wine64_main_orbis.c`: the flush sink set from ntdll's descriptor; the netlog
+    datagram buffer 2100 bytes;
+  - `native/orbis/orbislog/orbislog.c`: datagrams up to 2048 bytes, klog stays 512
+    (`ORBISLOG_KLOG_MAX`);
+  - `wine/ps5/pw_wine_sink.{c,h}`: `pw_wine_set_flush_sink`, `pw_wine_note_flush` (tested in
+    `tests/test_pw_wine_sink.c`), exported by `ntdll.prx` (`build_wine_orbis.sh`);
+  - `wine/patches/1080-win32u-orbis-note-each-present.patch`: `present_screen` tells ntdll each
+    present's dirty area, the desktop's area and whether it composed. Numbered 1080, after every
+    patch that touches `ps5drv.c` (the last is 0902): as 0490 it did not apply to a fresh series.
+- Repo: `check.sh p1` (with `num`; the line is the last copy or a longer copy it begins, because
+  klog keeps 512 bytes), `tests/check_p1_test.sh` + 8 fixtures, `build.sh probe-test` runs it.
+- Host tests: fork `make test` exit 0; `build.sh probe-test` exit 0 (a-f, p1).
+
+**Measurement notes for later steps:**
+- "First present" is the first frame after the Wine stage begins: 1.3-1.5 s in, while PINBALL.EXE
+  opens its window (it loads at 1.2 s). The segment runs from ~22 s to ~82 s.
+- orbis-compat's `clock_gettime` answers every CPU-time clock id with the monotonic clock, so
+  `CLOCK_THREAD_CPUTIME_ID` would have been wall time; hence `getrusage`.
+- Until 2026-11-01 18:00 every netlog datagram was cut at 512 bytes (`ps5log_raw`), the f lines
+  included.
+
+**Next:**
+1. The user commits, fork and repo.
+2. p2 (native WoW64): first the `sigaltstack`-via-syscall-53 stage. Or p3/p4 (one package, env.txt
+   toggles): T3 is written below, before p3's first run.
 
 Phase p does not gate g unless a rule says so. The one link: g runs on the native CPU when p2
 passes, else on the translator.
@@ -82,8 +150,8 @@ Per present (= per flush), in integer µs (a precision choice):
   `thread_cpu=ok|err:<rc>` (unmeasured on Orbis). It separates the guest's CPU time from its waits.
 - **Flushes:** `flush_hz` (presents per second over the segment), the dirty area per flush
   (`dirty_px_avg`, `dirty_px_max`) and `full_flushes`. `pw_ms_present` receives the whole frame and
-  no rectangle, so the dirty bounds are counted in the user driver at the flush: a field added to
-  the sink call, or a driver counter read like `pw_wow_stats`. With the histograms this shows
+  no rectangle, so the driver tells ntdll each present's dirty area just before it (patch 1080,
+  `pw_wine_note_flush` → the title's `pw_ms_flush`). With the histograms this shows
   whether one game frame is several flushes.
 - The sparse histograms go to netlog as `PW_MS hist <metric> ...` records for plots, not into the
   line.
@@ -202,9 +270,9 @@ step's data. Spread s = (max − min) / mean of a metric over p1's 3 launches.
 | Step | Threshold | Rule | Value |
 |---|---|---|---|
 | p2 | none | correctness only | – |
-| p3 | T3 for `copy_us_avg` | p1's copy avg × (1 − max(0.10, 3s)). The copy is expected to be the largest cost in the present besides the flip wait; p1 confirms or refutes that before T3 is written | after p1 |
+| p3 | T3 for `copy_us_avg` | p1's copy avg × (1 − max(0.10, 3s)). The copy is expected to be the largest cost in the present besides the flip wait; p1 confirms or refutes that before T3 is written. p1 (2026-11-01): mean 12941 µs, s = 0.05 %, so the 10 % floor applies; confirmed, the copy is the largest cost | **11647 µs** (written 2026-11-01 18:06, before any p3 run) |
 | p4 | `shown_hz` | >= 59, fixed now from the 60 Hz display (a: 60.5 Hz, d1: 59.9 Hz), not from data | 59 |
-| p5 | rate gate | p4 passed: `shown_hz>=59`. p4 failed: `flush_hz` >= the audio-off launch's `flush_hz` − 3 × p1's `flush_hz` spread (in Hz; p1 runs sync and has no `shown_hz`). The branch is fixed when p4's verdict is in | after p4 |
+| p5 | rate gate | p4 passed: `shown_hz>=59`. p4 failed: `flush_hz` >= the audio-off launch's `flush_hz` − 3 × p1's `flush_hz` spread (in Hz; p1 runs sync and has no `shown_hz`). The branch is fixed when p4's verdict is in. p1's `flush_hz` spread: 0.033 Hz, so 3× = 0.10 Hz | branch after p4; margin 0.10 Hz |
 | p5 | G for `grains_nonzero` | the host run of the same tail | after the host run |
 | p5 | D (dBFS) for the HDMI peak | above the level of a recording with the PS4 silent | after that recording |
 

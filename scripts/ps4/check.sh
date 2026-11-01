@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -43,6 +43,10 @@ second thread, SEH of guest faults) on the translator, no unresolved fault; f2 i
 wow64win; both from one wow32.exe launch (check each with the same --log). f is milestone f's own rule:
 Space Cadet Pinball played with the DS4 (C:\Pinball, plan f), no pixel rule (an HDMI frame of the table
 is the evidence, taken with shot.sh while it runs).
+Phase p (docs/ps4/HANDOFF-p.md), between f and g: p1 measures Space Cadet Pinball's attract mode over a
+fixed 60 s segment with the pad unused (plan p1): seg_s>=60, inputs=0, presents>=600 (a sanity floor),
+no unresolved fault, and every guest/copy/keep/flip histogram field (min, avg, p95, max) a number. No
+performance threshold.
 USAGE
 }
 
@@ -60,7 +64,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 
 if [ -z "$LOG" ]; then
@@ -72,15 +76,21 @@ fi
 NOW="$(date '+%Y-%m-%d %H:%M')"
 BID="$(build_id)"
 
-# The last PS4WINE line for this milestone, stripped of the logs.sh prefix, klog's "<118>[...]" tag
-# and the diagnostics record's "<seq>\t<ns>\tINFO\t" columns (its copy of the line arrives over netlog too).
-LINE="$(grep -E "PS4WINE $MS " "$LOG" | tail -n1 | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\[[^]]*\] *//; s/^[0-9]+\t[0-9]+\t[A-Z]+\t//' || true)"
+# The PS4WINE line for this milestone, stripped of the logs.sh prefix, klog's "<118>[...]" tag and
+# the diagnostics record's "<seq>\t<ns>\tINFO\t" columns (its copy of the line arrives over netlog too).
+# The last line, or a longer copy of it: klog keeps 512 bytes of a line and the diagnostics record 1024,
+# and the p lines are longer than both, so a cut copy arriving last is replaced by the longest line it
+# begins (the raw netlog copy is whole). A different line arriving last (a's after its restart) stays.
+LINE="$(grep -E "PS4WINE $MS " "$LOG" | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\[[^]]*\] *//; s/^[0-9]+\t[0-9]+\t[A-Z]+\t//' |
+        awk '{ all[NR] = $0 } END { if (!NR) exit; line = all[NR]
+              for (i = 1; i < NR; i++) if (length(all[i]) > length(line) && index(all[i], all[NR]) == 1) line = all[i]
+              print line }' || true)"
 emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "$2" "${NOTE:+$NOTE; }$(basename "$LOG")${SHOT:+; $(basename "$SHOT")}"; }
 if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-5] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -103,6 +113,12 @@ req() { # req KEY OP VALUE   OP: ge le eq in (VALUE: a comma list)
     esac
 }
 word() { [[ " $LINE " == *" $1 "* ]] || FAILS+=("missing word '$1'"); }
+num() { # num KEY...: each present and a non-negative integer (a histogram field; "-" is empty)
+    local k
+    for k in "$@"; do
+        [[ "${F[$k]:-}" =~ ^[0-9]+$ ]] || FAILS+=("$k=${F[$k]:-missing} not a number")
+    done
+}
 all() { # all KEY: an "N/M" count with every one of M > 0 (every import slot bound)
     local have="${F[$1]:-}"
     if [ -z "$have" ]; then FAILS+=("$1 missing"); return; fi
@@ -154,6 +170,9 @@ case "$MS" in
         # gdi64.exe's window built for i686 (wow32.exe's second part): d2's picture on the 800x600 desktop.
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "780,410=255,128,0") ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
+    p1) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
+        req presents ge 600; req faults_unresolved eq 0
+        for h in guest_us copy_us keep_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done ;;
     g) word vtmb; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
        # TODO(milestone h): list /data/ps4-wine/prefix/.../SAVE over FTP and require a save newer than the session start.
