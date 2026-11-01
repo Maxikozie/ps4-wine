@@ -13,7 +13,8 @@ usage() {
 usage: scripts/ps4/runtime.sh [--stage-only] [--prx-only] [--dest DIR] [--dry-run]
 
 Stages build/runtime/win/wine/{lib/wine/{x86_64-unix,x86_64-windows,i386-windows},share/wine/nls}
-from the fork's .deps/wine-orbis/prx/sce_module/*.prx and .deps/wine-host/install, then mirrors
+from the fork's .deps/wine-orbis/prx/sce_module/*.prx and .deps/wine-host/install (plus
+wowprospero.dll, the WoW64 CPU backend, from the host build tree: it is not installed), then mirrors
 it to \$PS4_HOST:/data/ps4-wine/runtime with lftp and verifies every file's size in the listing
 (FTP returns .prx files decrypted, so sizes, not hashes). PRX files get mode 777 (the loader
 refuses modules without the execute bit).
@@ -62,6 +63,11 @@ if [ "$PRX_ONLY" = 0 ]; then
             --exclude 'wpcap.dll' --exclude 'sane.ds' --exclude 'gphoto2.ds' \
             "$HOST_WINE/lib/wine/$arch/" "$WIN/lib/wine/$arch/"
     done
+    # wowprospero.dll (milestone f), after the rsync that would delete it: build_wowprospero.sh puts it
+    # in the host build tree, not in the install.
+    WOWP="$FORK/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
+    [ -f "$WOWP" ] || die "no $WOWP: scripts/ps4/build.sh wine"
+    command cp -f "$WOWP" "$WIN/lib/wine/x86_64-windows/"
     mkdir -p "$WIN/share/wine"
     rsync -a --delete "$HOST_WINE/share/wine/nls/" "$WIN/share/wine/nls/"
 fi
@@ -103,6 +109,6 @@ while IFS= read -r f; do
         awk -v n="$(basename "$rel")" '$NF == n { print $5 }' | head -n1 || true)"
     checked=$((checked + 1))
     if [ "$have" != "$want" ]; then log "size mismatch: $rel local $want remote ${have:-missing}"; bad=$((bad + 1)); fi
-done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' \))
+done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' -o -name 'wowprospero.dll' \))
 log "verified $checked file sizes, $bad mismatch(es)"
 [ "$bad" = 0 ] || die "upload incomplete"

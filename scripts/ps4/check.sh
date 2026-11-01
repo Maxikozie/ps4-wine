@@ -9,11 +9,11 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
-  --no-shot    skip the pixel check of the milestones that have one (b, d1, d2, d4, d, e1, e): a pass is then
+  --no-shot    skip the pixel check of the milestones that have one (b, d1, d2, d4, d, e1, e, f2): a pass is then
                reported as "PASS (no shot)"; the other milestones are unaffected
   --fb         take the pixels from the title's framebuffer readback instead of the HDMI capture:
                requires fb=ok in its PS4WINE line, fetches it with fbshot.sh (or uses --shot FILE,
@@ -30,6 +30,7 @@ Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 2
              e3 960,540 = 255,0,0 (vk64.exe's clear) and 240,135 = 0,255,0 (its square), the same readback.
              e  960,540 = CHECK_E_RGB (default 255,255,0: d3d11tri64.exe's triangle) and 240,135 = 0,0,255
                 (its clear), the same readback.
+             f2 d2's two pixels: gdi64.exe's window built for i686, inside wow32.exe (HDMI or --fb).
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
 and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
 scripted click; d5 is milestone d's own rule (check.sh d: the DS4 play after d4's click).
@@ -37,6 +38,9 @@ Sub-steps of e (docs/ps4/HANDOFF-e.md): e1 RADV's libvulkan.prx driven by the ti
 features, the display handed over, a 1920x1080 swapchain scanned out) + hello.exe; e2 winevulkan
 and Wine's Vulkan, and e3 win32u's surface with the hand-over and a Win32 swapchain, both from one
 vk64.exe launch (check each with the same --log).
+Sub-steps of f (docs/ps4/HANDOFF-f.md): f1 wowprospero.prx bound and wow32.exe's checks (x87/SSE2, a
+second thread, SEH of guest faults) on the translator, no unresolved fault; f2 its GDI picture through
+wow64win; both from one wow32.exe launch (check each with the same --log).
 USAGE
 }
 
@@ -54,7 +58,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 
 if [ -z "$LOG" ]; then
@@ -74,7 +78,7 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f[12] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -142,6 +146,11 @@ case "$MS" in
         req swapchain eq 1920x1080; req fb eq ok
         # vk64.exe's frames (tests/wine_vk64.c in the fork): red, the green square on 240,135.
         HAS_PIXEL=1; PIXELS=("960,540=255,0,0" "240,135=0,255,0") ;;
+    f1) word hello32; req cpu eq translator; all wow_bound; req fp eq ok; req thread eq ok; req seh eq ok
+        req faults_unresolved eq 0; req exit eq 0 ;;
+    f2) word gdi32; req win32u eq ok; req pixel eq ff8000; req window eq ok
+        # gdi64.exe's window built for i686 (wow32.exe's second part): d2's picture on the 800x600 desktop.
+        HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "780,410=255,128,0") ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
     g) word hl2; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

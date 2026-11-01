@@ -9,7 +9,7 @@ games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
 rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
-`docs/ps4/HANDOFF-e.md` (where milestone e starts; `HANDOFF-d.md` and `HANDOFF-c.md` for how d and c were reached), `docs/ps4/LOG.md` (every
+`docs/ps4/HANDOFF-f.md` (where milestone f starts; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every
 console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkouts.
 
 ## Hard rules
@@ -38,6 +38,12 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
   edit a hash or a threshold to make a check pass.
 - **Division of labour.** The user launches apps on the PS4 by hand and plays.
   Claude builds, packages, deploys, reads logs and takes screenshots.
+  The laptop is the user's only PS4 screen: Claude opens `view.sh` (in the
+  background, with the "PS4 Capture" entry's arguments: its `Exec` line in
+  `~/.local/share/applications/ps4-capture.desktop`, i.e. the HDMI `--sink`)
+  unasked whenever the user is to install, launch or play, and
+  reopens it right after every capture that took the stick (`shot.sh`, a
+  recording).
 - **Git.** The user commits. Do not commit or push unless asked. Never touch `refs/`.
 
 ## Environment
@@ -49,7 +55,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | Console paths | packages `/data/pkg/`, our data `/data/ps4-wine/{prefix,profiles,logs,cache}`, installed app `/user/app/<TITLE_ID>/` |
 | Title | `PSWN00001`, content `IV0000-PSWN00001_00-PS4WINE000000000` |
 | Host | Kubuntu (Ubuntu 26.04), x86_64. Toolchain at `$OO_PS4_TOOLCHAIN` (default `~/.local/opt/openorbis`); `common.sh` puts `/usr/lib/llvm-18/bin` first in PATH and sets `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` (PkgTool.Core cannot load ICU 78) |
-| Screen | USB HDMI capture stick: MacroSilicon MS2109 (USB `345f:2109`) at `/dev/video2` (the laptop webcam is `/dev/video0` and excluded; override with `PS4_CAPTURE_DEV`), MJPEG 1920x1080 up to 60 fps; PS4 at 1080p, HDCP off. No passthrough: the TV stays dark and the laptop is the user's only PS4 screen (`view.sh`). Only one program can read it at a time: close the viewer (its `pgrep -x` PID, never `pkill -f`) before `shot.sh` or any capture. After a stream opens it sends black (7,7,7) for ~1.7 s (~105 frames), so `shot.sh` keeps frame 150 (~3.3 s a shot); an all-7,7,7 frame means no picture or no signal, not a black screen. Short-lived pictures (e: ~10 s): record the launch (`ffmpeg -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 60 -i /dev/video2 -c copy X.mkv`, ~15 MB/s) and pull a frame; first used for e, 2026-11-01 |
+| Screen | USB HDMI capture stick: MacroSilicon MS2109 (USB `345f:2109`) at `/dev/video2` (the laptop webcam is `/dev/video0` and excluded; override with `PS4_CAPTURE_DEV`), MJPEG 1920x1080 up to 60 fps; PS4 at 1080p, HDCP off. No passthrough: the TV stays dark and the laptop is the user's only PS4 screen (`view.sh`). Only one program can read it at a time: close the viewer (its `pgrep -x` PID, never `pkill -f`) before `shot.sh` or any capture. After a stream opens it sends black (7,7,7) for ~1.7 s (~105 frames), so `shot.sh` keeps frame 150 (~3.3 s a shot); an all-7,7,7 frame means no picture or no signal, not a black screen. Short-lived pictures (e: ~10 s, f2: ~2 s): record the launch through the viewer, `view.sh --sink ... --record logs/<ts>-X.mkv` (mpv's `--stream-record`: the one reader shows and records every frame, ~58 fps, ~10 MB/s ≈ 0.6 GB a minute; it stops by itself after `--record-max` s, default 300, and `view.sh --stop-record` ends it at the line while the view goes on; afterwards keep a few seconds around the picture, `ffmpeg -ss A -t D -i X.mkv -c copy`, and delete the rest), then `ffmpeg -ss T -i X.mkv -frames:v 1 F.png`; never a second process in the picture's path (an ffmpeg `tee` into mpv was laggy, and mpv read the pipe as key presses) |
 
 ## Scripts (`scripts/ps4/`)
 
@@ -61,15 +67,16 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
 | `shot.sh` | one frame from the capture stick (pinned MJPEG 1920x1080); `--pixel X,Y`, `--expect-rgb` |
-| `view.sh` | live view for the user (the "PS4 Capture" menu entry): mpv shows the stick, `pw-loopback` sends its sound to the speakers; holds the stick while open (`--no-audio`, `--sink`, `--device`) |
+| `view.sh` | live view for the user (the "PS4 Capture" menu entry): mpv shows the stick, `pw-loopback` sends its sound to the speakers; holds the stick while open (`--no-audio`, `--sink`, `--device`; `--record FILE` records what it shows, capped by `--record-max`, `--stop-record`; one queued frame, mailbox present) |
 | `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
 | `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
 | `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
 | `prefix.sh` | `wineboot --init` with the fork's host Wine into `build/prefix` (dosdevices and builtin DLL copies removed, `hello.exe` added), upload to `/data/ps4-wine/prefix` |
 
 The loop for one console run: `logs.sh --label X &` (klog has no history, so
-start it first) → `deploy.sh` → the user launches → `logs.sh --expect` /
-`check.sh` → `shot.sh` → one line in `docs/ps4/LOG.md`. From milestone c the
+start it first) → `deploy.sh` → `view.sh &` (the user's screen) → the user
+installs and launches → `logs.sh --expect` / `check.sh` → close the viewer,
+`shot.sh`, reopen the viewer → one line in `docs/ps4/LOG.md`. From milestone c the
 Wine runtime and the prefix live on `/data` (`runtime.sh`, `prefix.sh`), so a
 Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
 `/data/ps4-wine/env.txt` (NAME=VALUE lines) changes Wine's environment per run.
@@ -89,7 +96,10 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
 - Default thread stack is 64 KiB (orbis-compat raises it to 2 MiB).
   `timer_create` with SIGEV_THREAD hangs. `sigaltstack` returns -1.
 - Returning from `main()` or calling `exit()` (from any module) is reported as
-  CE-34878-0: idle forever instead. Writes to fd 1/2 reach only klog.
+  CE-34878-0: idle forever instead. Writes to fd 1/2 reach only klog. So the
+  last launch is still running: close it (PS button, Options, Close
+  Application) before reinstalling. Installing over it fails with CE-33237-8
+  (klog: `sceLncServiceKillApp ... 0x80aa0003`, measured 2026-11-01).
 - Executable memory: `sceKernelAllocateDirectMemory` → map RW → `sceKernelMprotect`
   RWX. Asking for EXEC at map time fails. Page granule 16 KiB.
 - Flexible memory (`mmap(MAP_ANON)`, libc malloc) is ~384–440 MiB. Direct

@@ -1,0 +1,5 @@
+# synthetic fixture, written before the first f1 launch (format of logs.sh: HH:MM:SS N|K text)
+16:00:01 N PW_MS start plan=f1 exe=C:\wow32.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/f1/progress.txt
+16:00:02 N PW_MS stage=wow_bind wow_load=ok wow_bound=38/38 wow_first=- wow_hook=bound wow_sym=1
+16:00:02 N PW_MS stage=low_map low_map=ok low_free_mib=3812 low_used_mib=220 low_maps=9 low_hole=0x10000000+3072
+16:00:02 N PW_MS stage=display display=ok

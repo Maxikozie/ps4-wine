@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # prefix.sh: make the Wine prefix on the host (the console cannot run wineboot: patch 0550 stops
-# process creation) with the fork's host Wine, trim it, add the test programs (hello.exe,
-# gdi64.exe) and Wine's fonts, and upload it to the console's /data/ps4-wine/prefix over FTP.
+# process creation) with the fork's host Wine, trim it, select the 32-bit CPU (wowprospero), add
+# the test programs (hello.exe, gdi64.exe, ...) and Wine's fonts, and upload it to the console's
+# /data/ps4-wine/prefix over FTP.
 # From: prospero-win tools/pw_prefix.py @ 0e7b6b4 (LGPL-2.1-or-later): what is stripped from a
 # prefix before the upload (dosdevices) and the size verification.
 set -euo pipefail
@@ -15,8 +16,9 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              (third_party/prospero-win/.deps/wine-host), then: remove dosdevices (Wine recreates
              it on the console; a title cannot make symlinks), keep the DLL/EXE files under
              drive_c/windows/{system32,syswow64} (the PE loader maps a builtin only when its
-             file is there), build tests/wine_hello64.c with x86_64-w64-mingw32-gcc into
-             drive_c/hello.exe, then the extras
+             file is there), set HKLM\Software\Microsoft\Wow64\x86 to wowprospero.dll (32-bit
+             programs on the IA-32 translator, milestone f), build tests/wine_hello64.c with
+             x86_64-w64-mingw32-gcc into drive_c/hello.exe, then the extras
   --upload   mirror build/prefix to \$PS4_HOST:$PS4_DATA_ROOT/prefix with lftp, verify sizes
   --extras   into the existing build/prefix: tests/wine_gdi64.c -> drive_c/gdi64.exe (milestone
              d2/d3), tests/wine_vk64.c -> drive_c/vk64.exe (e2/e3), tests/wine_d3d11tri64.c ->
@@ -24,8 +26,10 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              drive_c/windows/system32 (milestone e; the release pinned in the fork's
              tools/pw_install.py, downloaded to build/downloads and checked), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
-             win32u finds fonts only there), the MenuHeight check; then put just those files
-             (no mirror of the whole prefix)
+             win32u finds fonts only there), with i686-w64-mingw32-gcc tests/wine_hello32.c ->
+             drive_c/hello32.exe and tests/wine_wow32.c -> drive_c/wow32.exe (milestone f1/f2) and
+             the host build's wowprospero.dll -> drive_c/windows/system32, the MenuHeight check;
+             then put just those files (no mirror of the whole prefix; the CPU key is --make's)
   (no option: --make and --upload)
 USAGE
 }
@@ -49,10 +53,14 @@ HELLO_SRC="$PROSPERO_WIN_DIR/tests/wine_hello64.c"
 GDI_SRC="$PROSPERO_WIN_DIR/tests/wine_gdi64.c"
 VK64_SRC="$PROSPERO_WIN_DIR/tests/wine_vk64.c"
 D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
+HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
+WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
+WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
 DXVK_VERSION=2.6.2
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
 EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
-    drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll)
+    drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll
+    drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll)
 
 # DXVK's 64-bit d3d11.dll and dxgi.dll into system32, from the release the fork pins (one pin:
 # tools/pw_install.py DXVK_RELEASES), checked by SHA-256. Native only where WINEDLLOVERRIDES says
@@ -90,6 +98,16 @@ add_extras() {
     x86_64-w64-mingw32-gcc -O1 -Wall -Wextra -Werror -o "$PREFIX/drive_c/d3d11tri64.exe" "$D3D11_SRC" \
         -ld3d11 -ldxgi -ld3dcompiler_47 -luser32
     add_dxvk
+    # Milestone f1/f2: 32-bit programs (their checks, then gdi64.exe's picture built for i686, in
+    # wow32.exe: one Wine program per console launch) and the CPU backend they run on, which is a
+    # builtin like the others: its file must be in system32.
+    need_cmd i686-w64-mingw32-gcc
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/hello32.exe" \
+        "$HELLO32_SRC"
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/wow32.exe" \
+        "$WOW32_SRC" -lgdi32 -luser32
+    [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
+    command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
     ls "$FONTS_SRC"/*.ttf >/dev/null 2>&1 || die "no fonts at $FONTS_SRC: scripts/ps4/build.sh wine"
     mkdir -p "$PREFIX/drive_c/windows/Fonts"
     cp "$FONTS_SRC"/*.ttf "$PREFIX/drive_c/windows/Fonts/"
@@ -101,7 +119,7 @@ add_extras() {
     if [ -n "$menu" ] && { [ "$menu" -lt 0 ] || [ "$menu" -gt 64 ]; }; then
         die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
     fi
-    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, wow32.exe $(stat -c %s "$PREFIX/drive_c/wow32.exe") bytes and wowprospero.dll, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
 }
 
 # put FILES... (relative to the prefix) and verify their sizes.
@@ -137,6 +155,15 @@ if [ "$MAKE" = 1 ]; then
         "$WINE" wineboot --init >/dev/null 2>&1
     WINEPREFIX="$PREFIX" "$WINE"server -w 2>/dev/null || true
     [ -f "$PREFIX/system.reg" ] || die "wineboot left no system.reg"
+    # Milestone f: 32-bit programs on wowprospero (the IA-32 translator), named by the prefix's CPU
+    # key (Wine's wow64 reads it; WINE_PS5_WOW64_CPU, patch 0611, would override it). Set after
+    # wineboot, which runs its 32-bit setup on the default CPU; nothing 32-bit runs on this host
+    # Wine afterwards (its install has no wowprospero).
+    WINEPREFIX="$PREFIX" WINEDEBUG=-all "$WINE" reg add 'HKLM\Software\Microsoft\Wow64\x86' /ve /d wowprospero.dll /f \
+        >/dev/null 2>&1 || die "reg add of the CPU key failed"
+    WINEPREFIX="$PREFIX" "$WINE"server -w 2>/dev/null || true
+    grep -A3 '^\[Software\\\\Microsoft\\\\Wow64\\\\x86\]' "$PREFIX/system.reg" | grep -q '^@="wowprospero.dll"' ||
+        die "system.reg does not name wowprospero.dll as the x86 CPU"
     # A title cannot create symlinks: dosdevices goes (Wine recreates it from the registry).
     rm -rf "$PREFIX/dosdevices"
     # The DLL and EXE files wineboot puts in system32/syswow64 stay: Wine's PE loader maps a
@@ -170,7 +197,8 @@ quit"
     log "uploading to ftp://$PS4_HOST:$PS4_FTP_PORT$DEST"
     lftp -c "$CMDS" >&2
     bad=0
-    for f in system.reg user.reg userdef.reg drive_c/hello.exe drive_c/gdi64.exe; do
+    for f in system.reg user.reg userdef.reg drive_c/hello.exe drive_c/gdi64.exe drive_c/wow32.exe \
+        drive_c/windows/system32/wowprospero.dll; do
         want="$(stat -c %s "$PREFIX/$f")"
         have="$(curl -sS --ftp-pasv "ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/$(dirname "$f")/" 2>/dev/null |
             awk -v n="$(basename "$f")" '$NF == n { print $5 }' | head -n1 || true)"

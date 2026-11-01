@@ -1,0 +1,12 @@
+# synthetic fixture, written before the first f1 launch (format of logs.sh: HH:MM:SS N|K text)
+16:00:01 N PW_MS start plan=f1 exe=C:\wow32.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/f1/progress.txt
+16:00:02 N PW_MS stage=wow_bind wow_load=ok wow_bound=37/38 wow_first=__wine_ps5_mprotect:zero wow_hook=bound wow_sym=1
+16:00:02 N PW_MS stage=low_map low_map=ok low_free_mib=3812 low_used_mib=220 low_maps=9 low_hole=0x10000000+3072
+16:00:02 N PW_MS stage=display display=ok
+16:00:05 N STDOUT HELLO32 fp=ok thread=ok
+16:00:05 N STDOUT HELLO32S seh=ok
+16:00:05 N STDOUT Hello from PE32
+16:00:08 N STDOUT GDI32 screen=800x600 pixel=ff8000 fonts=13 tahoma=1 text_px=310 window=ok dir=13:18 open=0 add=1:0 fonts_after=13
+16:00:08 N PW_MS stage=wow32 exit=0 server=inprocess cpu=translator wow_stats=ok wow_threads=3 faults_unresolved=0 faults_guest=3 faults_marked=1 faults_host=0 faults_smc=0 dbt_errors=0 fp=ok thread=ok seh=ok hello=ok frames=130 drawn=128 frame=800x600 fb=ok screen=800x600 pixel=ff8000 window=ok fonts=13
+16:00:08 K PS4WINE f1 hello32 cpu=translator wow_bound=37/38 fp=ok thread=ok seh=ok faults_unresolved=0 faults_guest=3 faults_marked=1 faults_host=0 faults_smc=0 dbt_errors=0 wow_threads=3 exit=0 hello=ok wow_first=__wine_ps5_mprotect:zero wow_hook=bound low_free_mib=3812 low_hole=0x10000000+3072 low_maps=9 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=14
+16:00:08 K PS4WINE f2 gdi32 win32u=ok pixel=ff8000 window=ok screen=800x600 frames=130 drawn=128 frame=800x600 fb=ok fonts=13 server=inprocess display=ok exit=0 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=14

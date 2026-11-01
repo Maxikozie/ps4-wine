@@ -23,6 +23,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
                      and libvulkan.prx from build.sh mesa --prx                               (milestone e)
+                     and wowprospero (.dll in the host tree, .prx on the Orbis side)          (milestone f)
   title              the ps4-wine title: the fork's native/orbis -> build/title/eboot.elf
                      -> dist/ps4-wine-<id>.pkg (title $TITLE_ID; the runtime is uploaded
                      separately by scripts/ps4/runtime.sh)                               (milestone c)
@@ -289,6 +290,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_c_test.sh"
     "$REPO_ROOT/tests/check_d_test.sh"
     "$REPO_ROOT/tests/check_e_test.sh"
+    "$REPO_ROOT/tests/check_f_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -371,6 +373,12 @@ build_wine() {
         (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="${extra# }" tools/build_host_wine.sh --jobs "$jobs" > "$BUILD_DIR/wine-host.out" 2>&1) ||
             die "build_host_wine.sh failed; see $BUILD_DIR/wine-host.out"
         tail -n1 "$BUILD_DIR/wine-host.out" >&2
+        # wowprospero (milestone f): the WoW64 CPU backend around the IA-32 translator, built into the
+        # host tree (wowprospero.dll for the runtime and the prefix; wowprospero.so for host runs).
+        log "wine: wowprospero into the host tree (.deps/wine-host/build/dlls/wowprospero)"
+        (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_BUILD="$PROSPERO_WIN_DIR/.deps/wine-host/build" \
+            PROSPERO_WINE_SOURCE="$PROSPERO_WIN_DIR/.deps/wine-host/source" tools/build_wowprospero.sh --jobs "$jobs" \
+            > "$BUILD_DIR/wowprospero-host.out" 2>&1) || die "build_wowprospero.sh failed; see $BUILD_DIR/wowprospero-host.out"
     fi
     # libvulkan.prx (milestone e) from the -femulated-tls copy of RADV (build.sh mesa --prx).
     local radv="$MESA_PRX_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a"
