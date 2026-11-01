@@ -5,7 +5,34 @@ Read `CLAUDE.md`, then this, then `MILESTONES.md` (the f row and its note), `ARC
 §4.4 and §4.5, `HANDOFF-e.md` (how e was reached; the PRX-to-PRX recipe is in its "What d taught"
 section) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 16:10: f1 and f2 passed)
+## Resume here (2026-11-01 17:00: milestone f passed)
+
+**Milestone f passed 2026-11-01 16:52** (LOG.md): Space Cadet Pinball played on the PS4 on the translator
+with the DualShock 4.
+```
+PS4WINE f pinball cpu=translator frames=3862 fps=54.0 faults_unresolved=0 native_caps=- play_s=71 ... end=touchpad ... frame=960x540
+```
+- **Plan `f`** (the title's default now), `native/orbis/pw_milestone_orbis.c`:
+  - stages `wow_bind`, `display`, `pinball`, running `C:\Pinball\PINBALL.EXE`;
+  - `WINE_PS5_DESKTOP=960x540`, which fills 1080p at scale 2;
+  - `f_script`: the DS4's buttons become keys through the fork's `.input` parser, with built-in
+    bindings that `<root>/input/pinball.input` replaces. Holding the touchpad 2 s ends the
+    session and sends the line; Pinball keeps running.
+  - the Wine watchdog is per plan (`pw_ms_wine_watchdog_s`, f: 1860 s).
+- **The first f launch (16:44)** passed the rule's fields, but its line came from the 180 s watchdog.
+  - Fixed: the per-plan watchdog above.
+  - The focus left for the shell at 16:47:04, cause not in the log; the pad then read 0x80000000.
+  - `win32u.prx` had no `pw_wine_setenv`, so `WINE_PS5_DESKTOP` never reached the user driver
+    (800x600). Fixed in `build_wine_orbis.sh`.
+- **Sound:** none. mmdevapi finds no `ps5` driver, the Orbis build has none, and Pinball runs silently.
+- **Next:**
+  1. The user commits, fork and repo.
+  2. f4, the native-caps probe (a bonus, not gated).
+  3. Optional: an Orbis audio driver (`wine/wineps5` on `sceAudioOut`, ARCH section 4.11).
+  4. Then g/h with Bloodlines (installed under `games/`, see "Games on the host"); MILESTONES names
+     HL2 for g.
+
+## Earlier: f1 and f2 (2026-11-01 16:10)
 
 **f1 and f2 passed on the console** (LOG.md 15:59 and 16:06, two launches of the same package,
 `ps4-wine-0ec0103+dirty-f1.pkg`):
@@ -39,7 +66,7 @@ PS4WINE f2 gdi32 win32u=ok pixel=ff8000 window=ok screen=800x600 ... fb=ok      
    console 0120 defaults the driver to `ps5`, and that driver is not built for Orbis.
    - **Unmeasured:** whether Pinball starts the same way on the console.
    - Porting `wine/wineps5` to `sceAudioOut` is optional for the f rule.
-3. **Pinball's files** go to the prefix as `C:\Pinball\` (from `Pinball/` in the repo root, gitignored).
+3. **Pinball's files** go to the prefix as `C:\Pinball\` (from `games/Pinball/`, gitignored).
    - Its window opens at about 210,128 of the 800x600 desktop and runs past the right edge.
      Consider `WINE_PS5_DESKTOP=1024x768` or a larger size for plan `f`.
 4. **Plan `f` and its line** (`PS4WINE f pinball cpu=translator frames>=600 faults_unresolved=0`,
@@ -119,6 +146,119 @@ Real code rarely uses either. Pinball did not hit them on the host.
 - The console title idles after its line. Close it before a reinstall: installing over it gave
   CE-33237-8 (CLAUDE.md).
 
+## Games on the host (the user's, under `games/`, gitignored; never stage anything there)
+
+- `games/Pinball/`: Space Cadet Pinball, the loose XP files.
+- `games/game-vampire.the.masquerade/`: GOG's offline installer for Bloodlines 1.2, "(up 11.511.410.2)
+  (68368)", setup.exe + -1.bin, 2.6 GB. GOG game ID 1207659240.
+- `games/game-vampire.the.masquerade.bloodlines.unofficial/`: GOG's "Bloodlines - Unofficial Patch",
+  "UP 11.5 (82662)", setup.exe + -1.bin, 2.8 GB. GOG game ID 1265943179.
+- Both installers are Inno Setup 5.6.2 (unicode) data (Setup 5.6.1).
+
+**Installed 2026-11-01 with innoextract 1.9** (Ubuntu `innoextract 1.9-3`): `innoextract --exclude-temp
+--progress=0 -d games/<dir> <setup.exe>` (the `-1.bin` is found beside it). It finished in ~23 s each
+with no warnings; innoextract checks every file's checksum. The installers were not touched.
+
+| Dir | From | Top level | Files | Size |
+|---|---|---|---|---|
+| `games/bloodlines-gog/` | the 68368 installer, left untouched afterwards | `Bin Docs Unofficial_Patch Vampire __redist app commonappdata`, `Vampire.exe` `Vampire.exe.12` `Loader.exe` `Loader.dll` `dbghelp.dll`, manual, GOG files | 20608 | 4.0 GiB (4216884092 B) |
+| `games/bloodlines-up/` | the 82662 installer | the same less `dbghelp.dll` | 21186 | 4.2 GiB (4419046441 B) |
+
+- **The UP installer is standalone**, not a patch. It is its own GOG product, a full game (`Vampire/`
+  with 5309 files, `Bin/`) plus `Unofficial_Patch/` (13522 files against the base's 12969), so it was
+  extracted on its own, with no base underneath.
+- **Both installs carry the UP's mod loader** (`VTMBup-loader.txt`):
+  - `Vampire.exe` (60 KB) loads `Loader.dll` and its plugins `Bin/loader/*.vtm`;
+  - `Vampire.exe.12` and the other `*.12`/`*.10`/`*.steam` files are kept originals, not loaded;
+  - `Loader.exe` is only a GUI menu that starts `Vampire.exe -game <mod>` by CreateProcess.
+- **GOG's primary play task** (goggame-*.info) is `vampire.exe -game Unofficial_Patch` in both.
+- **What innoextract does not do:** the installer's scripts (GOG's `goggame-*.script` registry
+  entries, the `__redist` DirectX setup) and the empty dirs it makes. `app/` holds GOG extras the
+  installer would place in `{app}`: icon, web cache, an empty `Unofficial_Patch/save/Vampire-999.sav`,
+  `Vampire/cfg/`. `commonappdata/` holds GOG's uninstaller DLL.
+- **Why not Wine:** run silently (`/VERYSILENT /SUPPRESSMSGBOXES /NOICONS /NORESTART /SP-`) under
+  the fork's headless user-driver Wine, in a throwaway prefix, the base installer unpacked its
+  temporary files (GOG's skinned UI: botva2.dll, crcdll.dll) and then spun at 100% CPU. It had read
+  1.1 MB, never opened the .bin, and wrote no game file in 5 minutes.
+
+**PE images: where they load** (`scripts/ps4/pe_bases.py --all`: every file starting with `MZ` in the
+root, `Bin/`, `Vampire/`, `Unofficial_Patch/`; "In": which install has the file, identical headers when
+both):
+
+| Image | In | ImageBase | End | RELOCS_STRIPPED | .reloc | Reloc dir | Relocatable |
+|---|---|---|---|---|---|---|---|
+| `dbghelp.dll` | gog | 0x02800000 | 0x02900000 | no | yes | 36848 | yes |
+| `Loader.dll` | both | 0x10000000 | 0x1010a000 | no | yes | 6816 | yes |
+| `Loader.exe` | both | 0x00400000 | 0x0042e000 | yes | no | 0 | **no** |
+| `Vampire.exe` | both | 0x00400000 | 0x00411000 | no | yes | 2052 | yes |
+| `Bin/binkw32.dll` | both | 0x18000000 | 0x18033000 | no | yes | 4048 | yes |
+| `Bin/engine.dll` | both | 0x20000000 | 0x213bb000 | no | yes | 107088 | yes |
+| `Bin/FileSystem_Stdio.dll` | both | 0x10000000 | 0x10027000 | no | yes | 6104 | yes |
+| `Bin/launcher.dll` | both | 0x10000000 | 0x10011000 | no | yes | 3180 | yes |
+| `Bin/loader/bugs_fix.vtm` | both | 0x10000000 | 0x1001d000 | no | yes | 5212 | yes |
+| `Bin/loader/mods_helper.vtm` | both | 0x10000000 | 0x10020000 | no | yes | 5208 | yes |
+| `Bin/loader/vtmb-tweaks.vtm` | up | 0x10000000 | 0x1003d000 | no | yes | 9452 | yes |
+| `Bin/loader/widescreen_fix.vtm` | both | 0x10000000 | 0x10023000 | no | yes | 7216 | yes |
+| `Bin/loader/widescreenUI_mod.vtm` | up | 0x10000000 | 0x10019000 | no | yes | 3952 | yes |
+| `Bin/MaterialSystem.dll` | both | 0x10000000 | 0x10297000 | no | yes | 16484 | yes |
+| `Bin/Mss32.dll` | both | 0x21100000 | 0x21164000 | no | yes | 22944 | yes |
+| `Bin/Mss32a.dll` | both | 0x21100000 | 0x2115e000 | no | yes | 21892 | yes |
+| `Bin/mssmp3.asi` | both | 0x26f00000 | 0x26f2c000 | no | yes | 6260 | yes |
+| `Bin/mssvoice.asi` | both | 0x26400000 | 0x26439000 | no | yes | 5428 | yes |
+| `Bin/msvcirt.dll` | both | 0x780a0000 | 0x780b2000 | no | yes | 1884 | yes |
+| `Bin/msvcp60.dll` | both | 0x780c0000 | 0x78121000 | no | yes | 11508 | yes |
+| `Bin/msvcrt.dll` | both | 0x78000000 | 0x78046000 | no | yes | 9728 | yes |
+| `Bin/MSVCRTD.DLL` | both | 0x10200000 | 0x10264000 | no | yes | 14168 | yes |
+| `Bin/shaderapidx9.dll` | both | 0x2a000000 | 0x2a175000 | no | yes | 15640 | yes |
+| `Bin/stdshader_dbg.dll` | both | 0x10000000 | 0x10022000 | no | yes | 5076 | yes |
+| `Bin/stdshader_dx6.dll` | both | 0x10000000 | 0x1002c000 | no | yes | 10036 | yes |
+| `Bin/stdshader_dx7.dll` | both | 0x10000000 | 0x1001e000 | no | yes | 3644 | yes |
+| `Bin/stdshader_dx8.dll` | both | 0x10000000 | 0x10039000 | no | yes | 15052 | yes |
+| `Bin/stdshader_dx9.dll` | both | 0x10000000 | 0x1001b000 | no | yes | 2216 | yes |
+| `Bin/StudioRender.dll` | both | 0x2c000000 | 0x2c26c000 | no | yes | 19208 | yes |
+| `Bin/tier0.dll` | both | 0x10000000 | 0x10034000 | no | yes | 5632 | yes |
+| `Bin/vampire_python21.dll` | both | 0x1e100000 | 0x1e1ae000 | no | yes | 28624 | yes |
+| `Bin/vaudio_miles.dll` | both | 0x10000000 | 0x10014000 | no | yes | 3784 | yes |
+| `Bin/vgui2.dll` | both | 0x10000000 | 0x10042000 | no | yes | 9496 | yes |
+| `Bin/vguimatsurface.dll` | both | 0x10000000 | 0x10051000 | no | yes | 12916 | yes |
+| `Bin/voice_miles.dll` | both | 0x10000000 | 0x1000e000 | no | yes | 1704 | yes |
+| `Bin/vphysics.dll` | both | 0x26000000 | 0x26102000 | no | yes | 37888 | yes |
+| `Bin/vstdlib.dll` | both | 0x10000000 | 0x10018000 | no | yes | 3160 | yes |
+| `Bin/zlib1.dll` | both | 0x10000000 | 0x10012000 | no | yes | 656 | yes |
+| `Vampire/cl_dlls/client.dll` | both | 0x10000000 | 0x106e9000 | no | yes | 404380 | yes |
+| `Vampire/cl_dlls/GameUI.dll` | both | 0x10000000 | 0x10080000 | no | yes | 42700 | yes |
+| `Vampire/dlls/vampire.dll` | both | 0x10000000 | 0x10ab9000 | no | yes | 717048 | yes |
+| `Bin/binkw32.dll.12` | both | 0x30000000 | 0x30068000 | no | yes | 20208 | yes |
+| `Bin/engine.dll.12` | both | 0x20000000 | 0x213bb000 | no | yes | 107088 | yes |
+| `Bin/shaderapidx9.dll.12` | both | 0x2a000000 | 0x2a175000 | no | yes | 15640 | yes |
+| `Bin/vampire_python21.dll.12` | both | 0x1e100000 | 0x1e1ae000 | no | yes | 28624 | yes |
+| `Vampire.exe.12` | both | 0x00400000 | 0x00416000 | yes | no | 0 | **no** |
+| `Vampire/cl_dlls/client.dll.12` | both | 0x10000000 | 0x106e9000 | no | yes | 404380 | yes |
+| `Vampire/cl_dlls/GameUI.dll.12` | both | 0x10000000 | 0x10080000 | no | yes | 42696 | yes |
+| `Vampire/dlls/vampire.dll.10` | both | 0x10000000 | 0x10acb000 | no | yes | 719928 | yes |
+| `Vampire/dlls/vampire.dll.12` | both | 0x10000000 | 0x10ac0000 | no | yes | 717104 | yes |
+| `Vampire/dlls/vampire.dll.steam` | both | 0x10000000 | 0x10ab9000 | no | yes | 717048 | yes |
+
+`__redist/` (DirectX setup, GOG's scriptinterpreter) and `commonappdata/` are all relocatable and not
+loaded by the game. `games/Pinball/PINBALL.EXE`: fixed at 0x01000000-0x0104b000 (relocations stripped),
+free on the PS4.
+
+**Verdict:**
+- **The game loads on the PS4 as far as image bases go.**
+  - `Vampire.exe` wants 0x400000, inside the eboot's 0x400000-0x650000, but it is relocatable (2052
+    bytes of relocations), so Wine moves it, as it moved wow32.exe in f1.
+  - Every DLL the game loads (`Bin/`, `Vampire/cl_dlls`, `Vampire/dlls`), the mod loader's `Loader.dll`
+    and plugins (`.vtm`) and Miles' `.asi` codecs are relocatable.
+  - Many want 0x10000000 and overlap each other; Wine moves those as well.
+  - `Unofficial_Patch/` adds no PE image.
+- **Fixed images: only two, both 0x400000 with stripped relocations, neither needed.**
+  - `Loader.exe`: replace it by `Vampire.exe -game Unofficial_Patch`. The console cannot run it
+    anyway: it starts the game by CreateProcess.
+  - `Vampire.exe.12`: the 1.2 original, kept as a backup.
+  - They overlap the eboot and each other, which does not matter: they are separate programs.
+- **Not checked:** what the game maps at fixed addresses at run time (VirtualAlloc with a base, the
+  2 GB RAM fix's large-address use). That is for g/h.
+
 ## Milestone f
 
 From `MILESTONES.md`:
@@ -139,9 +279,9 @@ There is no Direct3D in f. Milestone d already covers its GDI path in 64-bit.
 
 - **Space Cadet Pinball**, owner-supplied: the files of `Program Files\Windows NT\Pinball` from a
   32-bit Windows XP install (`PINBALL.EXE`, `PINBALL.DAT`, the `.WAV` files, `PINBALL.MID`,
-  `FONT.DAT`, `WAVEMIX.INF`, ...). Not in the repo (`*.exe` is gitignored). Proposed host location:
-  `build/games/pinball/` (gitignored). Ask the user before choosing another one. On the console
-  the files go to the prefix, `C:\Pinball\` on `/data`, uploaded once.
+  `FONT.DAT`, `WAVEMIX.INF`, ...). On the host: `games/Pinball/` (the user's; `/games/` is
+  gitignored, never stage anything under it). On the console the files go to the prefix,
+  `C:\Pinball\` on `/data`, uploaded once.
 - Our own test programs (`hello32.exe`, `gdi32.exe`), built with `i686-w64-mingw32` like the
   64-bit ones. They are not game files.
 

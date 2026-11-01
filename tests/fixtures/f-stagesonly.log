@@ -1,0 +1,4 @@
+# synthetic fixture, written before the first f launch (format of logs.sh: HH:MM:SS N|K text)
+17:00:01 N PW_MS start plan=f exe=C:\Pinball\PINBALL.EXE stages=0/3 stopped=- launches=1 resumed=- file=/data/ps4-wine/f/progress.txt
+17:00:02 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+17:00:02 N PW_MS stage=display display=ok

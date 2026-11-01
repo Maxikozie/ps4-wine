@@ -16,8 +16,8 @@ logs/
 # Windows binaries are private inputs, never tracked
 *.exe
 *.dll
-# Game files (milestone f: Space Cadet Pinball)
-/Pinball/
+# Game files and their installers, never tracked (Pinball, Bloodlines; their .bin/.DAT/.WAV too)
+/games/
 
 # Editor / tooling
 .vscode/

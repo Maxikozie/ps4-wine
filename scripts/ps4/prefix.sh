@@ -28,7 +28,9 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
              win32u finds fonts only there), with i686-w64-mingw32-gcc tests/wine_hello32.c ->
              drive_c/hello32.exe and tests/wine_wow32.c -> drive_c/wow32.exe (milestone f1/f2) and
-             the host build's wowprospero.dll -> drive_c/windows/system32, the MenuHeight check;
+             the host build's wowprospero.dll -> drive_c/windows/system32, the user's Space Cadet
+             Pinball (games/Pinball, gitignored, when present) -> drive_c/Pinball (milestone f), the
+             MenuHeight check;
              then put just those files (no mirror of the whole prefix; the CPU key is --make's)
   (no option: --make and --upload)
 USAGE
@@ -56,6 +58,7 @@ D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
 HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
 WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
 WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
+PINBALL_SRC="$REPO_ROOT/games/Pinball"   # the user's files (docs/ps4/HANDOFF-f.md "Inputs"), never tracked
 DXVK_VERSION=2.6.2
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
 EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
@@ -108,6 +111,14 @@ add_extras() {
         "$WOW32_SRC" -lgdi32 -luser32
     [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
     command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
+    # Milestone f: Space Cadet Pinball, the user's loose XP files, as C:\Pinball.
+    if [ -f "$PINBALL_SRC/PINBALL.EXE" ]; then
+        mkdir -p "$PREFIX/drive_c/Pinball"
+        command cp -f "$PINBALL_SRC"/* "$PREFIX/drive_c/Pinball/"
+        for f in "$PREFIX"/drive_c/Pinball/*; do EXTRA_FILES+=("drive_c/Pinball/$(basename "$f")"); done
+    else
+        log "no $PINBALL_SRC/PINBALL.EXE: C:\Pinball left out (milestone f needs it)"
+    fi
     ls "$FONTS_SRC"/*.ttf >/dev/null 2>&1 || die "no fonts at $FONTS_SRC: scripts/ps4/build.sh wine"
     mkdir -p "$PREFIX/drive_c/windows/Fonts"
     cp "$FONTS_SRC"/*.ttf "$PREFIX/drive_c/windows/Fonts/"

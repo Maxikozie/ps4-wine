@@ -13,7 +13,9 @@ does not read the program's exit), the program on the native CPU instead of the 
 unresolved fault, stage records only (NOLOG naming the stages). f2, with --fb on generated 1920x1080
 dumps of gdi64.exe's window (as check_d_test.sh makes them, converted by fbshot.sh --raw; R,G,B,A and the
 same bytes read as B,G,R,A) and with --no-shot: a pass, swapped red and blue, no window in the picture,
-no window created. The FTP fetch and the HDMI capture are not tested here. Exit 0 when every case matches.
+no window created. Then f (milestone f's own rule, Space Cadet Pinball) on tests/fixtures/f-*.log: a pass,
+the native CPU instead of the translator, too few frames, an unresolved fault, stage records only. The FTP
+fetch and the HDMI capture are not tested here. Exit 0 when every case matches.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; "") ;; *) usage; exit 1 ;; esac
@@ -64,6 +66,12 @@ case_ f2 f1-pass.log        1 FAIL  "pixel 780,410: rgb=0," --fb --shot "$TMP/wi
 case_ f2 f1-pass.log        1 FAIL  "pixel 960,540" --fb --shot "$TMP/black.png"
 case_ f2 f1-pass.log        0 PASS  "pixel=ff8000" --shot "$TMP/win-rgba.png"   # an HDMI frame given as a file
 case_ f2 f2-nowindow.log    1 FAIL  "window=create:1400 != ok" --no-shot
+
+case_ f  f-pass.log         0 PASS  "cpu=translator frames=17400 fps=58.0"
+case_ f  f-native.log       1 FAIL  "cpu=none != translator"
+case_ f  f-slow.log         1 FAIL  "frames=540 < 600"
+case_ f  f-unresolved.log   1 FAIL  "faults_unresolved=1 != 0"
+case_ f  f-stagesonly.log   1 NOLOG "stage records: wow_bind,display"
 
 if [ "$fails" -ne 0 ]; then echo "check_f_test: $fails failure(s)"; exit 1; fi
 echo "check_f_test: all passed"

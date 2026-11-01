@@ -40,7 +40,9 @@ and Wine's Vulkan, and e3 win32u's surface with the hand-over and a Win32 swapch
 vk64.exe launch (check each with the same --log).
 Sub-steps of f (docs/ps4/HANDOFF-f.md): f1 wowprospero.prx bound and wow32.exe's checks (x87/SSE2, a
 second thread, SEH of guest faults) on the translator, no unresolved fault; f2 its GDI picture through
-wow64win; both from one wow32.exe launch (check each with the same --log).
+wow64win; both from one wow32.exe launch (check each with the same --log). f is milestone f's own rule:
+Space Cadet Pinball played with the DS4 (C:\Pinball, plan f), no pixel rule (an HDMI frame of the table
+is the evidence, taken with shot.sh while it runs).
 USAGE
 }
 
@@ -78,7 +80,7 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f[12] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
