@@ -63,6 +63,10 @@ threads, every case on both (main_ok and new_ok all made), the Message class's p
 each (direct_main=1, direct_new=1), a CBT hook called on each (cbt_main>=1, cbt_new>=1), a new thread's send
 to a window of the main thread answered (cross=ok), exit=0 and no unresolved fault. The thread stacks' cost
 (hold_flex_kib, flex_mib*, threads_*, stack_floor_mib) is recorded, not gated, in p5w's line and p5's.
+p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix.h): stretches of grains in
+which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
+A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
+not gated.
 USAGE
 }
 

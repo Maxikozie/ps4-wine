@@ -4,7 +4,39 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 21:05: p5w PASSED, Pinball has sound, p5 FAIL on its underrun counter)
+## Resume here (2026-11-01 21:20: p5 PASSED, phase p done; e still passes after 1100)
+
+**Phase p is complete:** p1 measured, p2, p3, p4, p5w and p5 passed. Next is milestone g (Bloodlines),
+but first the thread stacks' cost (below: "The root fix for the stack cost").
+
+**p5's underrun count, as this plan defines it** (built after the 21:00 run):
+- Code: fork `src/pw_audio_mix.h` (`PwAudioStarve`, unit-tested in `tests/test_pw_audio_mix.c`),
+  `wine/wineps5/unix.c` (exported as `pw_wineps5_stats`, each underrun logged on `err:ps5audio`),
+  and the title's p5 line.
+- Per stream, the driver counts the grains in which a started stream's ring ran out. It sorts each
+  stretch of them by how the stretch ends:
+  - more data while the stream is still started: an **underrun** (silence inside a sound);
+  - a stop or reset: a **drain** (the sound's end; winmm stops its client only after the last block).
+- New fields:
+
+  | Field | Meaning |
+  |---|---|
+  | `underruns`, `underrun_grains` | the plan's underruns and their grains (gated: `underruns=0`) |
+  | `drains`, `drain_grains` | sound ends |
+  | `starved_grains`, `mixed_grains` | all short grains; all grains mixed |
+  | `audio_stats` | `ok`, or why the driver's counts are missing |
+  | `gaps`, `gap_max_us` | the title's old count of pauses between grains, renamed; recorded only |
+
+**Launches 21:15 and 21:18 (LOG.md), one package (`ps4-wine-0cb4675+dirty-p5u.pkg`), env.txt only:**
+
+| Launch | Result |
+|---|---|
+| L4 p5 | **PASS**: `underruns=0`, 14 drains (53 grains), 12 gaps (largest 674 ms, the mixer idle between sounds); 2130 non-silent grains, 1208 in the tail; HDMI tail -13.3 dB mean; the segment as before |
+| L5 e | **PASS** (HDMI frame t=37 s: 960,540 = 255,255,16, 240,135 = 2,0,247): DXVK's and RADV's worker threads make their system calls on Wine's 1 MiB kernel stacks for the first time; 600 frames, no hang, `ms_avg` 16.7 ms |
+
+L5 also had one 125 ms scan-out copy; the 14:48 pass had one of 161 ms, so it is not new.
+
+## Earlier: p5w passed, p5 failed on its first underrun counter (2026-11-01 21:05)
 
 **Console results (LOG.md 20:55, 20:56, 21:00), one package and one runtime, env.txt only:**
 
