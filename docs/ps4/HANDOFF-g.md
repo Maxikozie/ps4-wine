@@ -3,41 +3,49 @@
 Written 2026-11-01, after phase p (repo `fbd6853`). Read `CLAUDE.md`, then this, then `MILESTONES.md` (the g row
 and note), `HANDOFF-p.md` ("Resume here") and `HANDOFF-f.md` ("Games on the host", the PE image table).
 
-## Resume here (2026-11-02 00:30: g1n PASSED; g1m and g1 FAIL on 32-bit memory maps; nothing committed since 05e49a5)
+## Resume here (2026-11-02 00:55: g1n, g1m and g1 PASSED; next L4, e's 64-bit regression, then L5 Bloodlines)
 
-**Console results (LOG.md 00:20-00:26; one package `ps4-wine-d3e3119+dirty-g1.pkg`, one runtime):**
+**Console results (LOG.md 00:20-00:54; one package `ps4-wine-d3e3119+dirty-g1.pkg`):**
 
 | Launch | Result |
 |---|---|
-| L1 g1n | **PASS.** `wow32.exe` on the native CPU: SEH, x87/SSE2, second thread ok, `native_caps=7`, no unresolved or unhandled fault. g runs on the native CPU (the profile already says so) |
-| L2 g1m | **FAIL.** `vk32.exe`: instance, device, submit ok; `vkMapMemory` -> -1 (`VK_ERROR_OUT_OF_HOST_MEMORY`); `aliases=0 aliases_failed=0` |
-| L3 g1 | **FAIL**, the same cause. DXVK made the d3d9 device, then `Failed to map Vulkan memory: VK_ERROR_OUT_OF_HOST_MEMORY` (4 MiB); `CreateVertexBuffer` -> `D3DERR_INVALIDCALL` |
+| L1 g1n | **PASS.** `wow32.exe` on the native CPU: SEH, x87/SSE2, second thread ok, `native_caps=7`. g runs on the native CPU |
+| L2 g1m | FAIL: `vkMapMemory` -> -1, no alias made or refused |
+| L3 g1 | FAIL, the same cause: DXVK's `Failed to map Vulkan memory` (4 MiB), `CreateVertexBuffer` -> `D3DERR_INVALIDCALL` |
+| L4 g1m (trace) | FAIL as L2, with `+vulkan`: the cause found (below) |
+| L5 g1m | **PASS (framebuffer)** on the fixed runtime: `BO 9 (16 KiB) placed at 0x3000000`, 330 frames, red with the green square the GPU copied from the 32-bit program's mapping |
+| L6 g1 | **PASS (framebuffer)**, the same runtime: DXVK x32 d3d9, 600 frames, `ms_avg=19.4`, `px_c=ffff00 px_m=00ff00`, three placed aliases (4 MiB GARLIC, 16 MiB, 8 MiB; 28 MiB live), `batch=1 crossings_per_frame=16` |
 
-**The open gate item: where the -1 comes from.** mesa-ps4 0003's placed alias was **never called**: no alias made, none
-refused, no `orbis-drm: ... placed` line. With `warn+vulkan,fixme+vulkan` (L3), win32u logged none of its own map
-failures:
-- no `does not fit 32-bit pointer` FIXME (RADV's own, high mapping refused);
-- no `NtAllocateVirtualMemory failed` ERR (Wine's low range refused);
-- no `vkMapMemory2EXT failed` ERR (RADV refused the placed request);
-- no `Cannot export WOW64 memory without VK_EXT_map_memory_placed` WARN.
+**The cause of the -1 (fixed).** mesa-ps4 1a59cc1 advertises `VK_EXT_map_memory_placed` only under
+`MESA_SYSTEM_HAS_KMS_DRM` (`radv_physical_device.c`; its comment explains why the no-DRM arm could not keep the
+promise). So win32u's placed check failed, and `map_placed_align` stayed 0. win32u then mapped without a placed
+address, got RADV's own mapping in the arena above 4 GiB and refused it:
+`fixme:vulkan:win32u_vkMapMemory2KHR returned mapping 0x88... does not fit 32-bit pointer`. 0003's alias was
+unreachable.
+- **The handoff before this one was wrong** to say L3 had no such FIXME: L3's log has it (`0x886a00000`).
+- **L4's trace ruled out the rest:** `zero_bits` was set (the host instance got
+  `VK_KHR_external_memory_capabilities`, which win32u adds only for WoW64), and the device had `VK_KHR_map_memory2`.
+- **The fix is in `patches/mesa-ps4/0003`**, not in a new patch: it now also advertises the extension on
+  `__PS4__` (0003's alias and its unmap-to-reservation are what the comment said was missing), and its header no
+  longer claims RADV advertised it.
+- **No alignment change needed.** The SDK libc's `sysconf(_SC_PAGESIZE)` and `getpagesize()` both return 16384
+  (disassembled), so `minPlacedMemoryMapAlignment` is the 16 KiB page the alias requires.
+- **Netlog loss under `+vulkan`:** 740 of 1495 records arrived. Keep `+vulkan` for short runs only.
 
-The 32-bit batch layer (`pw_vk_batch_pe.c`) only records successful maps.
-
-**Candidates, in order of what to check first:**
-1. The WoW64 thunk of `vkMapMemory`/`vkMapMemory2KHR` in winevulkan's Unix side (`vulkan_thunks.c`, thunk32_*), or the
-   PE side's 32-bit `vkMapMemory` in `loader.c`, returning -1 before win32u is reached.
-2. `radv_MapMemory2` refusing the placed request before the winsys (alignment, flags, `memoryMapRangePlaced=false`),
-   with win32u's ERR not reaching the log. That needs checking that err:vulkan lines from that thread do arrive.
-3. win32u's selection (`zero_bits`, `has_VK_EXT_map_memory_placed`, the features) taking a path not covered above.
+**The runtime that passed g1 (L6) is the one L5 Bloodlines runs on** (the user's rule): the fork at `b0d5f17`,
+mesa-ps4 1a59cc1 with 0001-0003 as now in the repo, built by `build.sh mesa --prx` and `build.sh wine --skip-host`,
+and uploaded by `runtime.sh --prx-only` at 00:44. Do not rebuild a PRX before L5. A title-only change (a reinstall)
+is allowed for L5.
 
 **Next session:**
-1. Rerun g1m (`vk32.exe` makes few Vulkan calls) with `WINEDEBUG=err+all,+loaddll,+vulkan` in env.txt: the full trace
-   of the map call, including win32u's `Using placed map with alignment` (TRACE).
-2. On the host: `vk32.exe` on the headless drv tree took the external-memory-host path on lavapipe, which RADV on
-   Orbis does not offer (`has_userptr=false`). Make the host take the placed path instead, if lavapipe offers
-   `VK_EXT_map_memory_placed`.
-3. Fix, then g1m and g1 again. **The runtime that passes g1 is the runtime L5 runs on** (the user's rule). A
-   title-only change (a reinstall) is allowed for L5.
+1. **L4 of the plan: `PS4WINE_MILESTONE=e`**, the 64-bit regression on this runtime. RADV now advertises
+   `VK_EXT_map_memory_placed` to 64-bit processes too. win32u does not use it there (`zero_bits` is 0), but DXVK
+   sees the device extension list.
+2. **L5: Bloodlines** (`PS4WINE_MILESTONE=g`, `WINEDEBUG=+loaddll`), with a title rebuilt for the `threads_live`
+   fix (`build.sh title`, reinstall). `game.sh --saves-push` first if a save is wanted.
+3. **Not yet tested anywhere:** a placed alias going back to a reservation (unmap or free: no `restored` line in
+   L5/L6, since both kept their memory to exit). Bloodlines will free chunks; watch for `orbis-drm: placed alias ...
+   restored` and `could not be restored`.
 
 **The user's rules for g (2026-11-02):**
 - No mesa-ps4 0004 (GPU busy) and no orbis-compat 0002 (RADV stack knob) before the Bloodlines launch: 0004
@@ -47,39 +55,34 @@ The 32-bit batch layer (`pw_vk_batch_pe.c`) only records successful maps.
 **Recorded-only findings:**
 - **Per-thread census:** `sysctl(KERN_PROC_PID|KERN_PROC_INC_THREAD)` gives `ENOENT` on this firmware, so it stays
   off (`-` in g). `getrusage(RUSAGE_THREAD)` works on the calling thread.
-- **`threads_live` printed garbage** in L1-L3: the title read Wine's 32-bit `LONG` as 64 bits. The fix is in the
-  fork's source (`live_thread_fields`, `int32_t`), not in the installed package; it goes into L5's title.
-- **libvulkan's 7 threads** were all raised to the 16384 KiB floor (L3); flexible memory went 429 -> 248 MiB.
+- **`threads_live` printed garbage** in L1-L6: the title read Wine's 32-bit `LONG` as 64 bits. The fix is in the
+  fork (`live_thread_fields`, `int32_t`, committed in `b0d5f17`), not in the installed package. It goes into L5's
+  title.
+- **libvulkan's threads** were all raised to the 16384 KiB floor (L3: 7, L6: 8). Free flexible memory went 429 ->
+  232 MiB in L6.
+- **FTP returns `.prx` files decrypted** and not byte-equal to the `.oelf` (a control, `ws2_32.prx`, differs in
+  311K of 1.2 MB). To see whether an upload landed, use the listing's time (`cls -l --time-style=full-iso`; the
+  console's clock runs ~8 min ahead), not a hash.
 
 **Host side:**
 - The desktop Wine works. The user played Bloodlines through the tutorial.
 - Saves are in `build/saves/vtmb` (`Vampire-001.sav`, 00:10, the tutorial: the interior save). No hub save yet.
 - `game.sh --saves-push` puts them on the console.
+- lavapipe (Mesa 26.0.8) offers no `VK_EXT_map_memory_placed`, so the host cannot run the placed path.
 
-**On the console:** Bloodlines (20981 files, verified), `profiles/vtmb.ini` and `input/vtmb.input`, the runtime of
-L1-L3, and the prefix with DXVK x32 d3d9, `vk32.exe`, `d3d9tri32.exe` and `C:\g1\dxvk.conf`. `env.txt` holds L3's
-two lines.
+**On the console:**
+- Bloodlines (20981 files, verified), `profiles/vtmb.ini` and `input/vtmb.input`.
+- L5/L6's runtime.
+- The prefix with DXVK x32 d3d9, `vk32.exe`, `d3d9tri32.exe` and `C:\g1\dxvk.conf`.
+- `env.txt` holds L6's two lines (`g1`).
 
 **The capture stick** stopped delivering frames once (00:12-00:18): `mpv` waited with no window. `view.sh`'s
 `ffmpeg` and `mpv` had to be killed, and the stick replugged. A KWin script over `qdbus6` brings the "PS4" window to
 the current desktop (`build/` has none; it was a scratch file: `workspace.windowList()`, `w.desktops =
 [workspace.currentDesktop]`, `workspace.activeWindow = w`).
 
-**Uncommitted (the user commits):**
-- Repo:
-  - `scripts/ps4/{build,check,common,game,host-game,prefix}.sh`;
-  - `patches/mesa-ps4/0003`;
-  - `profiles/`;
-  - `tests/check_g_test.sh` and `tests/fixtures/g*.log`;
-  - docs: CLAUDE.md, MILESTONES, HANDOFF-g, HANDOFF-p, LOG.
-- Fork:
-  - `native/orbis/{wine64_main_orbis.c,pw_milestone_orbis.{c,h}}`;
-  - `src/pw_wine_start.h`;
-  - `tools/{build_wine_orbis,build_native_orbis}.sh`;
-  - `wine/orbis/{pw_vulkan_radv_orbis.{c,h},pw_wine_compat_orbis.c}`;
-  - `wine/ps5/pw_wine_compat_libc.c`, `wine/ps5/vulkan/pw_vk_batch_pe.c`;
-  - `wine/patches/1110`;
-  - `tests/{wine_d3d9tri32.c,test_wine_d3d9tri32.py,wine_vk64.c}`, Makefile.
+**Uncommitted (the user commits):** repo `patches/mesa-ps4/0003`, docs LOG and HANDOFF-g. The fork is clean
+(`b0d5f17`).
 
 ## Does g need a desktop host Wine?
 
@@ -111,7 +114,7 @@ Not needed: libvulkan-dev (Wine takes only the soname), wayland, gnutls, SDL.
 
 | # | Finding | Where | Gate path? |
 |---|---|---|---|
-| 1 | **32-bit Vulkan maps are refused.**<br>• RADV advertises `VK_EXT_map_memory_placed` (`radv_physical_device.c:955,1470`), so win32u's WoW64 path reserves a low range and asks for a placed map (`dlls/win32u/vulkan.c:507-520,1125-1176`).<br>• mesa-ps4's `ac_drm_bo_cpu_map` refuses any requested address ("cpu_map at a fixed address is not supported here", `ac_orbis_drm.c:7713`), and `has_userptr` is false on the PS4 (`ac_gpu_info.c:1116`).<br>• So 32-bit DXVK can map no host-visible memory. prospero-win's PS5 drivers map through a low CPU alias (fork `docs/WINE_PS5_BUILD.md:756-761,878`) | mesa-ps4 | yes |
+| 1 | **32-bit Vulkan maps are refused.**<br>• win32u's WoW64 path reserves a low range and asks for a placed map when the device offers `VK_EXT_map_memory_placed` (`dlls/win32u/vulkan.c:507-520,1125-1176`). **Corrected 2026-11-02:** RADV offered it only with KMS/DRM (`radv_physical_device.c:954`, `#if MESA_SYSTEM_HAS_KMS_DRM`), so on the PS4 win32u fell back to RADV's high mapping and refused it; 0003 now advertises it on `__PS4__` (Resume here).<br>• mesa-ps4's `ac_drm_bo_cpu_map` refuses any requested address ("cpu_map at a fixed address is not supported here", `ac_orbis_drm.c:7713`), and `has_userptr` is false on the PS4 (`ac_gpu_info.c:1116`).<br>• So 32-bit DXVK can map no host-visible memory. prospero-win's PS5 drivers map through a low CPU alias (fork `docs/WINE_PS5_BUILD.md:756-761,878`) | mesa-ps4 | yes |
 | 2 | **No `ws2_32.prx`.** `ws2_32`'s `DllMain` returns `!__wine_init_unix_call()` (`dlls/ws2_32/socket.c:731`), and the game imports `ws2_32` and `wsock32` | `build_wine_orbis.sh` | yes |
 | 3 | **No arguments or working directory.** Wine's argv is always `{"wine", exe}`, `PS4WINE_EXE` is cut at the first space (`wine64_main_orbis.c:148,506-510`), and `pw_cwd_set` is exported but unused. The PS5 title does both (`native/wine64_main.c:1253-1259,1376-1388`, `src/pw_wine_launch.c`) | title | yes |
 | 4 | **The prefix and uploads.**<br>• The prefix stages only DXVK's x64 `d3d11`/`dxgi` (`prefix.sh:74-94`); the pinned tarball has `x32/d3d9.dll`.<br>• `prefix.sh` puts files one at a time, and its mirror checks 8 files: no tool uploads and verifies 21k files (4.1 GiB) | scripts | yes |

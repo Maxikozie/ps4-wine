@@ -1,11 +1,12 @@
-mesa-ps4 @ 1a59cc1: VK_EXT_map_memory_placed on the PS4. RADV advertises the extension, and 32-bit Wine
-(win32u's WoW64 vkMapMemory2) relies on it to get host-visible memory below 4 GiB, but the Orbis arm's
-ac_drm_bo_cpu_map refused any requested address, so no 32-bit Vulkan program could map memory. A
-requested address now gets a CPU-only alias of the BO's physical pages there (the arena's, or the BO's
-GARLIC chunk), mapped with MAP_FIXED over what the caller committed; ac_drm_bo_cpu_unmap and BO free turn
-the alias back into a reservation (VK_MEMORY_UNMAP_RESERVE_BIT_EXT), and RADV's unmap-with-replace on the
-no-DRM arm takes that path for a placed mapping. ac_orbis_drm_alias_stats reports the aliases
-for the title (libvulkan.prx: pw_vulkan_alias_stats). Milestone g (docs/ps4/HANDOFF-g.md, gap 1). Applied by
+mesa-ps4 @ 1a59cc1: VK_EXT_map_memory_placed on the PS4. 32-bit Wine (win32u's WoW64 vkMapMemory2) needs the
+extension to get host-visible memory below 4 GiB, but RADV advertised it only with KMS/DRM, and the Orbis
+arm's ac_drm_bo_cpu_map refused any requested address, so no 32-bit Vulkan program could map memory (win32u
+fell back to RADV's own mapping above 4 GiB and refused it). RADV now advertises the extension on the PS4 as
+well (__PS4__), and a requested address gets a CPU-only alias of the BO's physical pages there (the arena's,
+or the BO's GARLIC chunk), mapped with MAP_FIXED over what the caller committed; ac_drm_bo_cpu_unmap and BO
+free turn the alias back into a reservation (VK_MEMORY_UNMAP_RESERVE_BIT_EXT), and RADV's unmap-with-replace
+on the no-DRM arm takes that path for a placed mapping. ac_orbis_drm_alias_stats reports the aliases for the
+title (libvulkan.prx: pw_vulkan_alias_stats). Milestone g (docs/ps4/HANDOFF-g.md, gap 1). Applied by
 scripts/ps4/build.sh mesa.
 
 Copyright (C) 2026 the ps4-wine authors. The change is to MIT-licensed Mesa code and is offered
@@ -266,6 +267,24 @@ index e4055c6..3058825 100644
  }
  
  int
+diff --git a/src/amd/vulkan/radv_physical_device.c b/src/amd/vulkan/radv_physical_device.c
+--- a/src/amd/vulkan/radv_physical_device.c
++++ b/src/amd/vulkan/radv_physical_device.c
+@@ -950,8 +950,13 @@
+        * processors - see radv_amdgpu_winsys_bo_map's no-DRM arm - neither is deliverable: the address
+        * comes back from the allocator rather than being dictated, and the hole would land in the very
+        * allocation the GPU is still addressing.
++       *
++       * The PS4 arm delivers both without a second owner (ps4-wine patches/mesa-ps4/0003): a placed map is
++       * a CPU-only alias of the BO's pages at the address asked for (ac_drm_bo_cpu_map), and an unmap with
++       * RESERVE turns that alias, never the BO's own mapping, back into a reservation. 32-bit Wine
++       * (win32u's WoW64 vkMapMemory2) needs the extension advertised to take that path at all.
+        */
+-#if MESA_SYSTEM_HAS_KMS_DRM
++#if MESA_SYSTEM_HAS_KMS_DRM || defined(__PS4__)
+       .EXT_map_memory_placed = true,
+ #endif
+       .EXT_memory_budget = true,
 diff --git a/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c b/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c
 index a722a69..b3b2076 100644
 --- a/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c
