@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|p3|p4|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -46,7 +46,12 @@ is the evidence, taken with shot.sh while it runs).
 Phase p (docs/ps4/HANDOFF-p.md), between f and g: p1 measures Space Cadet Pinball's attract mode over a
 fixed 60 s segment with the pad unused (plan p1): seg_s>=60, inputs=0, presents>=600 (a sanity floor),
 no unresolved fault, and every guest/copy/keep/flip histogram field (min, avg, p95, max) a number. No
-performance threshold.
+performance threshold. p3: the same segment on A8R8G8B8_SRGB scan-out buffers (present_path=vo720 or vo1080,
+vo_register=ok, vo_flip=ok) with copy_us_avg <= 11647 (T3, written from p1 before p3 ran). p4: three buffers
+and the asynchronous flip (present_mode=async, buffers=3) with shown_hz >= 59 and flip_errors=0. p3 and p4
+also read the title's test pattern over HDMI, 960,540 = 0,255,0 and 240,135 = 255,128,0: a frame
+of the launch's recording given with --shot (the pattern is on screen for 5 s before Wine starts; a live
+capture or the framebuffer readback cannot show it), or --no-shot.
 USAGE
 }
 
@@ -64,8 +69,12 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p3|p4|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
+if [[ "$MS" == p[34] ]]; then
+    [ "$FB" = 0 ] || die "$MS: the pattern is checked over HDMI only (--shot FRAME from the recording)"
+    [ -n "$SHOT" ] || [ "$NOSHOT" = 1 ] || die "$MS: give --shot FRAME (the recording's frame of the test pattern) or --no-shot"
+fi
 
 if [ -z "$LOG" ]; then
     LOG="$(ls -t "$LOGS_DIR"/*-"$MS".log 2>/dev/null | head -n1 || true)"
@@ -173,6 +182,16 @@ case "$MS" in
     p1) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
         req presents ge 600; req faults_unresolved eq 0
         for h in guest_us copy_us keep_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done ;;
+    p3|p4) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
+        req presents ge 600; req faults_unresolved eq 0; req vo_register eq ok; req vo_flip eq ok
+        for h in guest_us copy_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done
+        if [ "$MS" = p3 ]; then
+            req present_path in vo720,vo1080; req copy_us_avg le 11647   # T3 (docs/ps4/HANDOFF-p.md, from p1)
+        else
+            req present_mode eq async; req buffers eq 3; req shown_hz ge 59; req flip_errors eq 0
+        fi
+        # The test pattern full-screen: its green centre -> 960,540, its orange marker at an eighth -> 240,135.
+        HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
     g) word vtmb; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
        # TODO(milestone h): list /data/ps4-wine/prefix/.../SAVE over FTP and require a save newer than the session start.

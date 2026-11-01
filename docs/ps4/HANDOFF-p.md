@@ -4,7 +4,52 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 18:06: p1 done)
+## Resume here (2026-11-01 18:40: p1, p3, p4 done; p2 next)
+
+**p3 passed on `vo720`** (LOG.md 18:31) and **p4 passed** (18:40), both checked over HDMI on the
+recording of the launch. Five launches of the p3/p4 package in all (LOG.md 18:21-18:40):
+
+| Launch | Path | Result |
+|---|---|---|
+| 18:21 p3 | vo540: 960x540 A8R8G8B8 | FAIL: `sceVideoOutRegisterBuffers` 0x80290005 at pitch 960 and 1024. VideoOut refuses 960x540 (as it refused 2160p in a); the display never opened |
+| 18:28 p3 | vo720 | FAIL, not a measurement: the 18:21 launch's progress file (closed before its last stage ended) was resumed |
+| 18:31 p3 | vo720: 1280x720 A8R8G8B8, 1280x720 desktop, one row copy | **PASS**: VideoOut scales the 720p buffer to the 1080p output (pattern at 1.5x on HDMI); copy 0.92 ms (p1: 12.94, T3: 11.65) |
+| 18:36 p3 | vo1080: 1920x1080 A8R8G8B8, CPU 2x by rows | FAIL: copy 111.9 ms: each row was copied to the next one by reading it back out of the write-combined scan-out buffer. A fault of the code (fixed in the source since, not re-run), not of 1080p buffers; the format shows correctly |
+| 18:40 p4 | vo720, 3 buffers, async flip | **PASS**: 59.9 flips shown/s for 59.9 presents/s, no flip error; but every present waited for a free buffer |
+
+What p3 and p4 say:
+- **The copy is gone as a cost:** 0.92 ms instead of 12.94 ms per present, by letting VideoOut scale a
+  1280x720 buffer. The desktop for this path is 1280x720 (`WINE_PS5_DESKTOP`); Pinball's window is
+  the same size, with more black around it.
+- **The time saved went to the vblank wait** (flip 15.5 ms in sync). In attract mode Pinball presents
+  again ~0.2 ms after a present returns, so it is held by the display at 59.9/s whatever the present
+  path: sync waits in `IsFlipPending`, async in the slot wait (`slot_waits` = every present). As the
+  review predicted: p4's gain (no missed vblanks, a present that returns early) shows only when the
+  guest itself needs most of a frame. Attract mode does not.
+- **Formats:** A8R8G8B8_SRGB shows the driver's B,G,R,X (alpha 0) correctly at 1280x720 and 1920x1080.
+- **For g:** none of this touches DXVK's path (`wsi_orbis.c`). For GDI games, `vo720` with async is
+  the faster sink; neither is the title's default yet (plan f still uses the scale path).
+
+**Changed since the plan (2026-11-01):**
+- `vo540` is replaced by `vo720` (1280x720 buffers, 1280x720 desktop, VideoOut scales) and `vo1080`
+  (1920x1080 buffers, no swizzle, CPU 2x). The user chose to test both.
+- The p3/p4 lines are `PS4WINE p3|p4 bench pinball ...` with `present_path=`, `present_mode=`,
+  `buffers=`, `shown_hz=`, ... fields; the rules read the fields (`check.sh p3`: `present_path` in
+  vo720,vo1080, `vo_register=ok`, `vo_flip=ok`, `copy_us_avg<=11647`; `check.sh p4`:
+  `present_mode=async`, `buffers=3`, `shown_hz>=59`, `flip_errors=0`; both the HDMI pattern, given as
+  `--shot` from the recording).
+- The pattern follows the desktop: 960x540 (scale, vo1080) or 1280x720 (vo720), green on the centre,
+  orange on (w/8, h/8), so full-screen it lands on 960,540 and 240,135.
+- After a launch closed before its last stage, the next launch resumes that cycle (18:28): move
+  `/data/ps4-wine/<plan>/progress.txt` aside first, or let the resumed launch close the cycle.
+
+**Fixed in the source after the runs (not yet on the console):** `vo1080` widens each row in cached
+memory and writes it twice; the guest CPU read happens before the async slot wait (the p4 line's
+`guest_cpu_us_avg=465` counted the wait's polling; guest wall time was 0.22 ms).
+
+**Next:** the user commits; then p2 (native WoW64): first the `sigaltstack`-via-syscall-53 stage.
+
+## Earlier: p1 done (2026-11-01 18:06)
 
 **p1 passed**: three passing launches of one package (LOG.md 18:00, 18:03, 18:06,
 `ps4-wine-73a9a10+dirty-p1b.pkg`, plan `p1` the title's default, env.txt empty). A first launch at 17:55
@@ -166,8 +211,8 @@ p1's fields, `build=`, `session_s` and the stage fields as in f.
 |---|---|---|
 | p1 | Measure. 3 launches of one package, for the run-to-run spread | `PS4WINE p1 bench pinball cpu=translator seg_s=60 inputs=0 presents>=600 faults_unresolved=0`, every histogram field present. No performance threshold |
 | p2 | Native WoW64 | `PS4WINE p2 native native_caps=7 cpu=native seg_s=60 inputs=0 faults_unresolved=0 segment=done` |
-| p3 | Drop the CPU copy | `PS4WINE p3 vo540 vo_register=ok vo_flip=ok seg_s=60 inputs=0 faults_unresolved=0 copy_us_avg<=T3` **and** HDMI 960,540 = 0,255,0, 240,135 = 255,128,0 |
-| p4 | Non-blocking present | `PS4WINE p4 async buffers=3 seg_s=60 inputs=0 faults_unresolved=0 shown_hz>=59 flip_errors=0` **and** p3's HDMI pattern check |
+| p3 | Drop the CPU copy (**passed 18:31, vo720**) | `PS4WINE p3 bench pinball ... present_path=vo720\|vo1080 vo_register=ok vo_flip=ok seg_s=60 inputs=0 faults_unresolved=0 copy_us_avg<=T3` **and** HDMI 960,540 = 0,255,0, 240,135 = 255,128,0 |
+| p4 | Non-blocking present (**passed 18:40**) | `PS4WINE p4 bench pinball ... present_mode=async buffers=3 seg_s=60 inputs=0 faults_unresolved=0 shown_hz>=59 flip_errors=0` **and** p3's HDMI pattern check |
 | p5 | Orbis audio | `PS4WINE p5 audio driver=orbis open=ok seg_s=60 inputs=0 faults_unresolved=0 grains_nonzero>=G underruns=0`, the rate gate below, **and** the recording's audio peak >= D dBFS in the tail's window |
 
 ### p1: measure
@@ -194,6 +239,8 @@ p1's fields, `build=`, `session_s` and the stage fields as in f.
 
 ### p3: drop the CPU copy
 
+- **Outcome (2026-11-01):** 960x540 is refused by VideoOut; `vo720` passed, `vo1080` failed on a
+  read-back fault (see "Resume here"). The text below is the plan as written.
 - **First try** 960x540 A8R8G8B8_SRGB linear VideoOut buffers. The driver's BGRA is that format's
   memory order, so a row `memcpy` replaces the swizzle and the scale.
 - Whether VideoOut scales a smaller buffer to 1080p is unmeasured (see "VideoOut sizes").
