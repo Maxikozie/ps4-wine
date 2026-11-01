@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -69,6 +69,13 @@ live threads (hold_flex_kib, and hold2_flex_kib for the second 8 after the first
 twice the 512 KiB the layer's small policy gives. stack_policy, threads_kept/small/keep_refused, hold_back_kib
 and the probe's sp_lib_* are recorded, not gated. e's line carries the same thread fields and libvulkan.prx's
 own (vk_threads_created, vk_stack_floor_kib), recorded.
+Milestone g (docs/ps4/HANDOFF-g.md): g1n f1's checks on the native CPU (wow32.exe, plan g1n: cpu=native,
+native_caps=7); g1m vk32.exe's 32-bit placed maps (bits=32, map=ok, map32=ok) and e3's picture (--fb);
+g1 d3d9tri32.exe under DXVK's x32 d3d9 with the vampire profile's settings (bits=32, map32=ok, batch=1,
+300 frames, 960,540 = 255,255,0 and 240,135 = 0,255,0 with --fb); g2 Bloodlines' menu, the user's first
+mark (menu=1, exit=running); g the 300 s window after the second mark (gameplay=1), session_s counted
+from that mark; gseg an interior or hub segment's fields, recorded. faults_unresolved in the g lines adds
+Wine's unhandled-exception reports to the translator's count.
 p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix.h): stretches of grains in
 which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
@@ -93,7 +100,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -127,7 +134,8 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
+          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -248,6 +256,28 @@ case "$MS" in
         fi
         # The test pattern full-screen: its green centre -> 960,540, its orange marker at an eighth -> 240,135.
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
+    # Milestone g's sub-steps (docs/ps4/HANDOFF-g.md), fixed 2026-11-01 before their first runs.
+    # g1n: f1's checks on the native CPU (wow32.exe); a FAIL sends g to the translator.
+    g1n) word hello32; req cpu eq native; req native_caps eq 7; all wow_bound; req fp eq ok; req thread eq ok
+         req seh eq ok; req faults_unresolved eq 0; req exit eq 0 ;;
+    # g1m: vk32.exe (wine_vk64.c for i686): 32-bit placed maps (mesa-ps4 0003) and e3's picture, whose green
+    # square the GPU copies from the mapped memory the 32-bit program wrote.
+    g1m) word vk32; req bits eq 32; req map eq ok; req map32 eq ok; req present eq ok; req frames ge 300
+         req gpu_hang eq 0; req swapchain eq 1920x1080; req fb eq ok; req faults_unresolved eq 0
+         HAS_PIXEL=1; PIXELS=("960,540=255,0,0" "240,135=0,255,0") ;;
+    # g1: d3d9tri32.exe under DXVK's x32 d3d9 with the vampire profile's settings, batching on; its yellow
+    # triangle and the MANAGED texture's green square, from the host reference run (tests/test_wine_d3d9tri32.py
+    # on lavapipe through the PS4 user driver: px_c=ffff00 px_m=00ff00).
+    g1) word d3d9; req bits eq 32; req map32 eq ok; req batch eq 1; req frames ge 300; req gpu_hang eq 0
+        req swapchain eq 1920x1080; req fb eq ok; req faults_unresolved eq 0
+        HAS_PIXEL=1; PIXELS=("960,540=255,255,0" "240,135=0,255,0") ;;
+    # g2: Bloodlines' main menu, the user's first mark; an HDMI frame is kept as evidence, not checked.
+    g2) word vtmb; req menu eq 1; req faults_unresolved eq 0; req exit eq running ;;
+    # gseg: a 60 s interior or hub segment: recorded, so only the fields are checked.
+    gseg) word vtmb; req seg in int,hub
+          for k in fps_avg presents window_s crossings_per_frame frame_us_avg frame_us_p95 seg_inputs flex_mib; do
+              [ -n "${F[$k]:-}" ] || FAILS+=("$k missing")
+          done ;;
     # g: fixed 2026-11-01 before the first g run (docs/ps4/HANDOFF-g.md: gameplay=1 is the user's mark).
     g) word vtmb; req batch eq 1; req gameplay eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

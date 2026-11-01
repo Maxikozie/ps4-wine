@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first g launch (format of logs.sh: HH:MM:SS N|K text)
+21:00:00 N PS4WINE gseg vtmb seg=hub fps_avg=21.4 presents=1284 window_s=60 crossings_per_frame=1210 frame_us_avg=46729 frame_us_p95=60000 frame_us_max=- hitches_50ms=200 seg_inputs=0 flex_mib=185 cpu=native main_cpu_us_avg=- cs_cpu_us_avg=- gpu_us_avg=- build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=1700

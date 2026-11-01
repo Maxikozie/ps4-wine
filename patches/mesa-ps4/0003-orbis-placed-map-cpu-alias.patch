@@ -1,0 +1,290 @@
+mesa-ps4 @ 1a59cc1: VK_EXT_map_memory_placed on the PS4. RADV advertises the extension, and 32-bit Wine
+(win32u's WoW64 vkMapMemory2) relies on it to get host-visible memory below 4 GiB, but the Orbis arm's
+ac_drm_bo_cpu_map refused any requested address, so no 32-bit Vulkan program could map memory. A
+requested address now gets a CPU-only alias of the BO's physical pages there (the arena's, or the BO's
+GARLIC chunk), mapped with MAP_FIXED over what the caller committed; ac_drm_bo_cpu_unmap and BO free turn
+the alias back into a reservation (VK_MEMORY_UNMAP_RESERVE_BIT_EXT), and RADV's unmap-with-replace on the
+no-DRM arm takes that path for a placed mapping. ac_orbis_drm_alias_stats reports the aliases
+for the title (libvulkan.prx: pw_vulkan_alias_stats). Milestone g (docs/ps4/HANDOFF-g.md, gap 1). Applied by
+scripts/ps4/build.sh mesa.
+
+Copyright (C) 2026 the ps4-wine authors. The change is to MIT-licensed Mesa code and is offered
+under the same MIT terms as the files it patches.
+
+diff --git a/src/amd/common/ac_orbis_drm.c b/src/amd/common/ac_orbis_drm.c
+index e4055c6..3058825 100644
+--- a/src/amd/common/ac_orbis_drm.c
++++ b/src/amd/common/ac_orbis_drm.c
+@@ -398,6 +398,13 @@ struct orbis_bo {
+    off_t    garlic_phys;
+    uint64_t garlic_addr;
+    uint64_t garlic_bytes;
++
++   /* A PLACED CPU ALIAS (VK_EXT_map_memory_placed): this BO's pages mapped a second time, CPU-only, at an
++    * address the caller chose. 32-bit Wine asks for one below 4 GiB, over memory it committed there first
++    * (win32u's WoW64 vkMapMemory2). The GPU keeps addressing the BO at its own VA. Zero when there is none.
++    * ps4-wine patches/mesa-ps4/0003. */
++   uint64_t alias_addr;
++   uint64_t alias_bytes;
+ };
+ 
+ /* THE uint32_t HANDLE IS NOT DECORATION. Six functions in this layer take a bo_handle rather than an
+@@ -7661,6 +7668,10 @@ ac_drm_bo_alloc(ac_drm_device *dev, struct amdgpu_bo_alloc_request *alloc_buffer
+    return -ENOMEM;
+ }
+ 
++#if defined(__PS4__)
++static void orbis_alias_unmap(struct orbis_bo *obo, const char *why); /* placed aliases, below (0003) */
++#endif
++
+ int
+ ac_drm_bo_free(ac_drm_device *dev, ac_drm_bo bo)
+ {
+@@ -7680,6 +7691,7 @@ ac_drm_bo_free(ac_drm_device *dev, ac_drm_bo bo)
+     * about. If the winsys freed the BO without unmapping it, that chunk would be lost for the life
+     * of the process and the address would be left as a hole. Restoring is idempotent - it does
+     * nothing when the UNMAP already ran, which is the normal path. */
++   orbis_alias_unmap(obo, "free"); /* first: a placed alias maps the GARLIC chunk's pages too (0003) */
+    orbis_garlic_restore(obo);
+ #endif
+    if (!obo->foreign)
+@@ -7688,6 +7700,169 @@ ac_drm_bo_free(ac_drm_device *dev, ac_drm_bo bo)
+    return 0;
+ }
+ 
++#if defined(__PS4__)
++/* ---------------------------------------------------------------- placed CPU aliases (patches/mesa-ps4/0003)
++ *
++ * 32-bit Wine cannot use a pointer above 4 GiB, and every BO lives in the arena, far above it. win32u's WoW64
++ * vkMapMemory2 therefore commits a range below 4 GiB and asks for the BO to be mapped THERE
++ * (VK_MEMORY_MAP_PLACED_BIT_EXT, alignment minPlacedMemoryMapAlignment = the 16 KiB page). The CPU and the GPU
++ * share one page table here, so the BO itself cannot move: its physical pages are mapped a second time at the
++ * requested address, CPU-only, with MAP_FIXED over what Wine committed. Milestone a measured both halves of
++ * that on this console - one direct-memory block aliased at two addresses (alias=1) and MAP_FIXED inside a
++ * reservation (map_fixed=1) - above 4 GiB at 2 MiB alignment; below 4 GiB, at 16 KiB, over Wine's committed
++ * range is what this code is the first to do.
++ *
++ * Wine's committed direct memory under the alias stays allocated (Wine still owns it) until Wine frees the
++ * range: one copy of each mapped BO's size in direct memory, no more. */
++#define ORBIS_ALIAS_PROT       0x03   /* CPU read and write; the GPU uses the BO's own VA */
++#define ORBIS_MAP_NO_OVERWRITE 0x0080
++
++static simple_mtx_t orbis_alias_lock = SIMPLE_MTX_INITIALIZER;
++static unsigned orbis_alias_live, orbis_alias_made;
++static uint64_t orbis_alias_live_bytes, orbis_alias_peak_bytes;
++static unsigned orbis_alias_failed;
++
++/* The physical page behind addr, an address in the BO's own range, and how many bytes from there come from the
++ * same source: the BO's GARLIC chunk where it has one (orbis_garlic_back re-backs a VRAM BO's whole mapped
++ * range), the arena's own page everywhere else. */
++static off_t
++orbis_bo_phys_at(const struct orbis_bo *obo, uint64_t addr, uint64_t limit, uint64_t *run)
++{
++   const uint64_t g0 = obo->garlic_addr, g1 = obo->garlic_addr + obo->garlic_bytes;
++   if (obo->garlic_bytes != 0 && addr >= g0 && addr < g1) {
++      *run = MIN2(limit, g1 - addr);
++      return (off_t)(obo->garlic_phys + (addr - g0));
++   }
++   *run = (obo->garlic_bytes != 0 && addr < g0) ? MIN2(limit, g0 - addr) : limit;
++   return (off_t)(orbis_arena_phys + (addr - orbis_arena_map_base));
++}
++
++/* Turn [addr, +bytes) into a reservation: the state VK_MEMORY_UNMAP_RESERVE_BIT_EXT promises. A fixed
++ * reservation over the alias first; if the kernel will not replace a mapping that way, unmap and reserve the
++ * then empty range. Either way the outcome is logged once, since this is the half not measured before g. */
++static void
++orbis_alias_reserve(uint64_t addr, uint64_t bytes)
++{
++   static unsigned said;
++   void *at = (void *)(uintptr_t)addr;
++   int32_t err = sceKernelReserveVirtualRange(&at, bytes, ORBIS_MAP_FIXED, orbis_page_size());
++   if (err == 0 && (uintptr_t)at == addr) {
++      if (orbis_budget(&said, 1))
++         mesa_logi("orbis-drm: placed alias 0x%" PRIx64 " (%" PRIu64 " KiB) restored to a reservation in place",
++                   addr, bytes / 1024);
++      return;
++   }
++   const int32_t first = err;
++   err = sceKernelMunmap((void *)(uintptr_t)addr, bytes);
++   at = (void *)(uintptr_t)addr;
++   const int32_t again =
++      sceKernelReserveVirtualRange(&at, bytes, ORBIS_MAP_FIXED | ORBIS_MAP_NO_OVERWRITE, orbis_page_size());
++   if (again == 0 && (uintptr_t)at == addr) {
++      if (orbis_budget(&said, 1))
++         mesa_logi("orbis-drm: placed alias 0x%" PRIx64 " restored by unmap + reserve (a fixed reserve over it "
++                   "-> 0x%08x)", addr, (unsigned)first);
++      return;
++   }
++   mesa_loge("orbis-drm: placed alias 0x%" PRIx64 " (%" PRIu64 " KiB) could not be restored to a reservation: "
++             "reserve 0x%08x, munmap 0x%08x, reserve again 0x%08x at %p - the range is a hole now",
++             addr, bytes / 1024, (unsigned)first, (unsigned)err, (unsigned)again, at);
++}
++
++static int
++orbis_alias_map(struct orbis_bo *obo, uint64_t want)
++{
++   const uint64_t page = orbis_page_size();
++   const uint64_t base = (uint64_t)(uintptr_t)obo->cpu;
++   const uint64_t bytes = (obo->size + page - 1) & ~(page - 1);
++   static unsigned said, refused;
++
++   if (obo->alias_bytes != 0 || obo->foreign || (want & (page - 1)) != 0 || bytes == 0) {
++      if (orbis_budget(&refused, 8))
++         mesa_loge("orbis-drm: placed map of BO %u at 0x%" PRIx64 " refused: %s", obo->handle, want,
++                   obo->alias_bytes ? "it already has one" : obo->foreign ? "foreign pages" :
++                   bytes == 0 ? "empty BO" : "address not page-aligned");
++      p_atomic_inc(&orbis_alias_failed);
++      return -EINVAL;
++   }
++
++   for (uint64_t done = 0; done < bytes;) {
++      uint64_t run;
++      const off_t phys = orbis_bo_phys_at(obo, base + done, bytes - done, &run);
++      void *at = (void *)(uintptr_t)(want + done);
++      const int32_t err = sceKernelMapDirectMemory(&at, run, ORBIS_ALIAS_PROT, ORBIS_MAP_FIXED, phys, page);
++      if (err != 0 || (uintptr_t)at != want + done) {
++         if (orbis_budget(&refused, 8))
++            mesa_loge("orbis-drm: placed map of BO %u (%" PRIu64 " KiB) at 0x%" PRIx64 ": sceKernelMapDirectMemory"
++                      "(0x%" PRIx64 ", %" PRIu64 " KiB, phys 0x%" PRIx64 ") -> 0x%08x, landed at %p",
++                      obo->handle, bytes / 1024, want, want + done, run / 1024, (uint64_t)phys, (unsigned)err, at);
++         if (err == 0)
++            sceKernelMunmap(at, run);
++         if (done != 0)
++            orbis_alias_reserve(want, done);
++         p_atomic_inc(&orbis_alias_failed);
++         return -ENOMEM;
++      }
++      done += run;
++   }
++
++   obo->alias_addr = want;
++   obo->alias_bytes = bytes;
++   simple_mtx_lock(&orbis_alias_lock);
++   ++orbis_alias_made;
++   ++orbis_alias_live;
++   orbis_alias_live_bytes += bytes;
++   orbis_alias_peak_bytes = MAX2(orbis_alias_peak_bytes, orbis_alias_live_bytes);
++   simple_mtx_unlock(&orbis_alias_lock);
++   if (orbis_budget(&said, 4))
++      mesa_logi("orbis-drm: BO %u (%" PRIu64 " KiB%s) placed at 0x%" PRIx64 ", a CPU alias of 0x%" PRIx64
++                " (%u live, %" PRIu64 " KiB)", obo->handle, bytes / 1024, obo->garlic_bytes ? ", GARLIC" : "",
++                want, base, orbis_alias_live, orbis_alias_live_bytes / 1024);
++   return 0;
++}
++
++static void
++orbis_alias_unmap(struct orbis_bo *obo, const char *why)
++{
++   if (obo->alias_bytes == 0)
++      return;
++   orbis_alias_reserve(obo->alias_addr, obo->alias_bytes);
++   if (strcmp(why, "unmap") != 0) {
++      static unsigned said;
++      if (orbis_budget(&said, 4))
++         mesa_logw("orbis-drm: BO %u freed with its placed alias 0x%" PRIx64 " still mapped (%s) - restored",
++                   obo->handle, obo->alias_addr, why);
++   }
++   simple_mtx_lock(&orbis_alias_lock);
++   --orbis_alias_live;
++   orbis_alias_live_bytes -= obo->alias_bytes;
++   simple_mtx_unlock(&orbis_alias_lock);
++   obo->alias_addr = 0;
++   obo->alias_bytes = 0;
++}
++#endif
++
++/* Placed aliases for the PS4 title's lines (ps4-wine's libvulkan.prx exports them as pw_vulkan_alias_stats):
++ * made so far, live now and their bytes, the peak of those bytes, and refusals. Zeros on the host arm. */
++void ac_orbis_drm_alias_stats(uint32_t *made, uint32_t *live, uint64_t *live_bytes, uint64_t *peak_bytes,
++                              uint32_t *failed);
++void
++ac_orbis_drm_alias_stats(uint32_t *made, uint32_t *live, uint64_t *live_bytes, uint64_t *peak_bytes,
++                         uint32_t *failed)
++{
++#if defined(__PS4__)
++   simple_mtx_lock(&orbis_alias_lock);
++   *made = orbis_alias_made;
++   *live = orbis_alias_live;
++   *live_bytes = orbis_alias_live_bytes;
++   *peak_bytes = orbis_alias_peak_bytes;
++   simple_mtx_unlock(&orbis_alias_lock);
++   *failed = p_atomic_read(&orbis_alias_failed);
++#else
++   *made = *live = *failed = 0;
++   *live_bytes = *peak_bytes = 0;
++#endif
++}
++
+ int
+ ac_drm_bo_cpu_map(ac_drm_device *dev, ac_drm_bo bo, void **cpu)
+ {
+@@ -7708,11 +7883,20 @@ ac_drm_bo_cpu_map(ac_drm_device *dev, ac_drm_bo bo, void **cpu)
+       return -EINVAL;
+    }
+ 
+-   /* *cpu carries a REQUESTED address on the way in (the virtio arm documents this), and RADV only uses that
+-    * for its replace path. Honouring it silently would hand back memory other than this BO's. */
++   /* *cpu carries a REQUESTED address on the way in (the virtio arm documents this): VK_EXT_map_memory_placed,
++    * which 32-bit Wine uses to get a mapping below 4 GiB. Handing back the BO's own address instead would be
++    * memory other than the caller asked for, so a requested address gets a CPU alias of the BO's pages there
++    * (ps4-wine patches/mesa-ps4/0003), or a refusal. */
+    if (*cpu && *cpu != obo->cpu) {
+-      mesa_logw("orbis-drm: cpu_map at a fixed address is not supported here");
++#if defined(__PS4__)
++      const int r = orbis_alias_map(obo, (uint64_t)(uintptr_t)*cpu);
++      if (r)
++         return r;
++      return 0; /* *cpu already holds the address the alias landed at */
++#else
++      mesa_logw("orbis-drm: cpu_map at a fixed address is not supported on the host arm");
+       return -EINVAL;
++#endif
+    }
+ 
+    *cpu = obo->cpu;
+@@ -7722,9 +7906,20 @@ ac_drm_bo_cpu_map(ac_drm_device *dev, ac_drm_bo bo, void **cpu)
+ int
+ ac_drm_bo_cpu_unmap(ac_drm_device *dev, ac_drm_bo bo)
+ {
+-   /* A no-op that SUCCEEDS, and the reason is the same as cpu_map's: the mapping belongs to the VA op, not to
+-    * this call. Tearing it down here would unmap memory the GPU is still addressing. */
+-   return bo.abo ? 0 : -EINVAL;
++   /* A no-op that SUCCEEDS for the BO's own mapping, and the reason is the same as cpu_map's: the mapping belongs
++    * to the VA op, not to this call. Tearing it down here would unmap memory the GPU is still addressing.
++    *
++    * A placed alias is this call's to undo, and it is undone into a RESERVATION, never a hole: the range is
++    * the caller's address space (Wine committed it before asking), which is what VK_MEMORY_UNMAP_RESERVE_BIT_EXT
++    * promises and what Wine's own free of the range expects to find. */
++   struct orbis_bo *obo = bo.abo;
++   if (!obo)
++      return -EINVAL;
++#if defined(__PS4__)
++   if (obo->alias_bytes)
++      orbis_alias_unmap(obo, "unmap");
++#endif
++   return 0;
+ }
+ 
+ int
+diff --git a/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c b/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c
+index a722a69..b3b2076 100644
+--- a/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c
++++ b/src/amd/vulkan/winsys/amdgpu/radv_amdgpu_bo.c
+@@ -823,7 +823,16 @@ radv_amdgpu_winsys_bo_unmap(struct radeon_winsys *_ws, struct radeon_winsys_bo *
+    assert(bo->cpu_map);
+    if (replace) {
+ #if !MESA_SYSTEM_HAS_KMS_DRM
+-      /* ⚠ NOT REACHABLE HERE, and it must not become reachable by accident. `replace` is
++      /* A PLACED MAPPING IS separately owned: ac_drm_bo_cpu_map made a CPU alias of the BO's pages at the
++       * address the caller chose (ps4-wine patches/mesa-ps4/0003), and the BO's own mapping, which the GPU
++       * addresses, sits at its VA. ac_drm_bo_cpu_unmap turns the alias back into a reservation, which is what
++       * VK_MEMORY_UNMAP_RESERVE_BIT_EXT asks for. Only the BO's own mapping takes the refusal below. */
++      if ((uintptr_t)bo->cpu_map != (uintptr_t)bo->base.va) {
++         ac_drm_bo_cpu_unmap(radv_amdgpu_winsys(_ws)->dev, bo->bo);
++         bo->cpu_map = NULL;
++         return;
++      }
++      /* ⚠ NOT REACHABLE HERE for the BO's own mapping, and it must not become reachable by accident. `replace` is
+        * VK_MEMORY_UNMAP_RESERVE_BIT_EXT, which keeps the address reserved by punching an anonymous
+        * PROT_NONE hole over the mapping - and where one mapping serves both processors that hole lands in
+        * the allocation the GPU is still addressing, exactly as the destroy path above explains. The

@@ -77,6 +77,30 @@ build_id() {
 
 timestamp() { date +%Y%m%d-%H%M%S; }
 
+# DXVK, the release the fork pins (one pin: tools/pw_install.py DXVK_RELEASES): the archive under
+# build/downloads, fetched once and checked by SHA-256 on every use; prints its path.
+DXVK_VERSION=2.6.2
+dxvk_archive() {
+    local pin url sha archive
+    pin="$(python3 -I - "$PROSPERO_WIN_DIR/tools/pw_install.py" "$DXVK_VERSION" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "DXVK_RELEASES" for t in node.targets):
+        url, sha = ast.literal_eval(node.value)[sys.argv[2]]
+        print(url, sha)
+PY
+)"
+    url="${pin% *}"; sha="${pin#* }"
+    [ -n "$url" ] && [ ${#sha} = 64 ] || die "no DXVK $DXVK_VERSION pin in the fork's tools/pw_install.py"
+    archive="$BUILD_DIR/downloads/dxvk-$DXVK_VERSION.tar.gz"
+    mkdir -p "$BUILD_DIR/downloads"
+    [ -f "$archive" ] || { log "downloading $url"; curl -sSfL -o "$archive.part" "$url" && mv -f "$archive.part" "$archive"; } ||
+        die "cannot download $url"
+    [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$sha" ] || die "$archive does not match DXVK $DXVK_VERSION's pinned SHA-256"
+    printf '%s' "$archive"
+}
+
 # PkgTool.Core with the private OpenSSL 1.1 it needs (setup-host.sh --install-openssl11).
 OPENSSL11_PREFIX="${OPENSSL11_PREFIX:-$HOME/.local/opt/openssl-1.1}"
 pkgtool() {

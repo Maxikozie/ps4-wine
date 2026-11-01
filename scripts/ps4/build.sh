@@ -7,7 +7,7 @@ set -euo pipefail
 usage() {
     cat <<USAGE
 usage: scripts/ps4/build.sh --check-toolchain
-       scripts/ps4/build.sh <compat|mesa|probe|probe-test|triangle|wine|title|all>
+       scripts/ps4/build.sh <compat|mesa|probe|probe-test|triangle|wine|wine-desktop|title|all>
 
   --check-toolchain  report every host tool, SDK path and reference checkout the
                      port needs; exit 1 if a required one is missing
@@ -16,7 +16,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
@@ -24,11 +24,14 @@ usage: scripts/ps4/build.sh --check-toolchain
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
                      and libvulkan.prx from build.sh mesa --prx                               (milestone e)
                      and wowprospero (.dll in the host tree, .prx on the Orbis side)          (milestone f)
+                     The host trees are always headless (--without-x --without-freetype).
+  wine-desktop       a desktop host Wine (X11, FreeType, PulseAudio) in .deps/wine-host-desktop, for
+                     playing a game on the laptop; needs the -dev packages it names        (milestone g)
   title              the ps4-wine title: the fork's native/orbis -> build/title/eboot.elf
                      -> dist/ps4-wine-<id>.pkg (title $TITLE_ID; the runtime is uploaded
                      separately by scripts/ps4/runtime.sh)                               (milestone c)
   all                wine + title
-  Options after the target: --jobs N (wine), --skip-host (wine: the Orbis side only), --prx (mesa)
+  Options after the target: --jobs N (wine, wine-desktop), --skip-host (wine: the Orbis side only), --prx (mesa)
 USAGE
 }
 
@@ -326,6 +329,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_p5_test.sh"
     "$REPO_ROOT/tests/check_p5w_test.sh"
     "$REPO_ROOT/tests/check_p6_test.sh"
+    "$REPO_ROOT/tests/check_g_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -434,6 +438,30 @@ build_wine() {
         die "build_wine_orbis.sh failed; see $BUILD_DIR/wine-orbis.out and .deps/wine-orbis/report.json"
 }
 
+# The desktop host Wine (milestone g, docs/ps4/HANDOFF-g.md H1): the pin and series of .deps/wine-host,
+# with X11, FreeType, fontconfig and PulseAudio, in its own tree, so a game can be played on the laptop
+# (scripts/ps4/host-game.sh). The headless trees above stay as they are; nothing here feeds the runtime.
+DESKTOP_DEV_PACKAGES=(libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev libxrender-dev
+    libxinerama-dev libxcomposite-dev libpulse-dev libfreetype-dev libfontconfig-dev)
+build_wine_desktop() {
+    local jobs="${JOBS:-$(nproc)}" a p missing="" tree="$PROSPERO_WIN_DIR/.deps/wine-host-desktop" so
+    for a in "$@"; do case "$a" in --jobs) ;; [0-9]*) jobs="$a" ;; *) die "build wine-desktop: unknown option $a" ;; esac; done
+    [ -d "$PROSPERO_WIN_DIR/.git" ] || [ -f "$PROSPERO_WIN_DIR/.git" ] ||
+        die "no fork at $PROSPERO_WIN_DIR: git submodule update --init third_party/prospero-win"
+    for p in "${DESKTOP_DEV_PACKAGES[@]}"; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+    [ -z "$missing" ] || die "the desktop Wine needs these packages (the user installs them):$missing"
+    [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ] || die "no /usr/lib/x86_64-linux-gnu/libvulkan.so.1 (DXVK needs the Vulkan loader)"
+    log "wine-desktop: $tree (Wine 490f6d5 + the fork's series; X11, FreeType, PulseAudio; log $BUILD_DIR/wine-desktop.out)"
+    (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="ac_cv_lib_soname_vulkan=libvulkan.so.1" \
+        tools/build_host_wine.sh --work "$tree" --jobs "$jobs" > "$BUILD_DIR/wine-desktop.out" 2>&1) ||
+        die "build_host_wine.sh failed; see $BUILD_DIR/wine-desktop.out and $tree/configure.log"
+    for so in winex11.drv/winex11.so winepulse.drv/winepulse.so win32u/win32u.so winevulkan/winevulkan.so; do
+        [ -f "$tree/build/dlls/$so" ] || die "the desktop Wine built no dlls/$so (see $tree/configure.log)"
+    done
+    grep -q '^#define SONAME_LIBFREETYPE' "$tree/build/include/config.h" || die "the desktop Wine found no FreeType"
+    log "wine-desktop: winex11, winepulse, FreeType and Vulkan present; wine is $(tail -n1 "$BUILD_DIR/wine-desktop.out")"
+}
+
 # The title: the fork's build_native_orbis.sh -> build/title/eboot.elf -> dist/ps4-wine-<id>.pkg.
 build_title() {
     local out="$BUILD_DIR/title" bid elf
@@ -468,6 +496,7 @@ case "$1" in
     probe-test) probe_test ;;
     triangle) build_triangle ;;
     wine) shift; build_wine "$@" ;;
+    wine-desktop) shift; build_wine_desktop "$@" ;;
     title) build_title ;;
     all) build_wine; build_title ;;
     *) usage; exit 1 ;;

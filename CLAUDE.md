@@ -65,7 +65,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | Script | Does |
 |---|---|
 | `setup-host.sh` | prints missing apt packages (never sudo); `--install-toolchain` (OpenOrbis v0.5.4, sha256-pinned); `--install-openssl11` (private OpenSSL 1.1 that PkgTool.Core's `pkg_build` needs) |
-| `build.sh <target>` | `--check-toolchain`; `compat` (orbis-compat → `build/orbis-compat`), `mesa` (mesa-ps4 RADV, no nix, local clone → `build/mesa-ps4`), `probe` (→ `dist/probe-<id>.pkg`), `probe-test` (host tests, incl. `check_a/b/c_test.sh`), `wine` (fork: host Wine + Orbis PRXs, `--skip-host`), `title` (fork `native/orbis` → `dist/ps4-wine-<id>.pkg`) |
+| `build.sh <target>` | `--check-toolchain`; `compat` (orbis-compat → `build/orbis-compat`), `mesa` (mesa-ps4 RADV, no nix, local clone → `build/mesa-ps4`), `probe` (→ `dist/probe-<id>.pkg`), `probe-test` (host tests, incl. `check_a/b/c_test.sh`), `wine` (fork: host Wine + Orbis PRXs, `--skip-host`; the host trees always headless), `wine-desktop` (a desktop host Wine with X11, PulseAudio and FreeType in `.deps/wine-host-desktop`, milestone g), `title` (fork `native/orbis` → `dist/ps4-wine-<id>.pkg`) |
 | `pkg.sh --elf X` | ELF → fSELF → `.pkg` in the layout that grants ~4.4 GiB direct memory |
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
@@ -74,6 +74,8 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
 | `check.sh <a-h, sub-step, pN>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
 | `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
+| `game.sh` | Bloodlines (UP 11.5, `games/bloodlines-up`, read only) to `C:\VTMB` of the console's prefix with its profile and DS4 preset (`profiles/`), mirror resumable, every file's size verified; `--saves-push/--saves-pull` |
+| `host-game.sh` | Bloodlines on the laptop under the desktop Wine (`build/host-game/vtmb` reflink copy, `build/prefix-desktop`, DXVK x32 d3d9, batching on); `--census`, `--no-hud`, `--saves-out` |
 | `prefix.sh` | `wineboot --init` with the fork's host Wine into `build/prefix` (dosdevices and builtin DLL copies removed, `hello.exe` added), upload to `/data/ps4-wine/prefix` |
 
 The loop for one console run: `logs.sh --label X &` (klog has no history, so

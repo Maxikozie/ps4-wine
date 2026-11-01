@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first g launch (format of logs.sh: HH:MM:SS N|K text)
+21:00:00 N PS4WINE g2 vtmb menu=0 faults_unresolved=1 faults_unhandled=1 exit=fault presents=1800 exe_base=0x00660000 vtm=5 bink=1 miles=1 ws2_32=loaded cpu=native profile=vtmb profile_status=ok dxvk_oom=0 build=abc1234+dirty stages=4/4 stopped=- launches=1 resumed=- session_s=40

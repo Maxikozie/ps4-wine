@@ -23,14 +23,16 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
   --extras   into the existing build/prefix: tests/wine_gdi64.c -> drive_c/gdi64.exe (milestone
              d2/d3), tests/wine_vk64.c -> drive_c/vk64.exe (e2/e3), tests/wine_d3d11tri64.c ->
              drive_c/d3d11tri64.exe and DXVK 2.6.2's x64 d3d11.dll and dxgi.dll ->
-             drive_c/windows/system32 (milestone e; the release pinned in the fork's
+             drive_c/windows/system32 and its x32 d3d9.dll -> drive_c/windows/syswow64 (milestones
+             e and g; the release pinned in the fork's
              tools/pw_install.py, downloaded to build/downloads and checked), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
              win32u finds fonts only there), with i686-w64-mingw32-gcc tests/wine_hello32.c ->
              drive_c/hello32.exe and tests/wine_wow32.c -> drive_c/wow32.exe (milestone f1/f2) and
              the host build's wowprospero.dll and wow64native.dll (phase p2) -> drive_c/windows/system32, the user's Space Cadet
-             Pinball (games/Pinball, gitignored, when present) -> drive_c/Pinball (milestone f), the
-             MenuHeight check;
+             Pinball (games/Pinball, gitignored, when present) -> drive_c/Pinball (milestone f),
+             tests/wine_vk64.c for i686 -> drive_c/vk32.exe and tests/wine_d3d9tri32.c ->
+             drive_c/d3d9tri32.exe with drive_c/g1/dxvk.conf (milestone g1m/g1), the MenuHeight check;
              then put just those files (no mirror of the whole prefix; the CPU key is --make's)
   (no option: --make and --upload)
 USAGE
@@ -57,40 +59,28 @@ VK64_SRC="$PROSPERO_WIN_DIR/tests/wine_vk64.c"
 D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
 HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
 WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
+D3D9_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d9tri32.c"   # milestone g1: 32-bit D3D9 under DXVK
 WINCB_SRC="$PROSPERO_WIN_DIR/tests/wine_wincb.c"   # phase p5 step p5w: windows and callbacks on new threads
 WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
 W64N_DLL="$PROSPERO_WIN_DIR/.deps/wow64native/x86_64-windows/wow64native.dll"   # tools/build_wow64native.sh (phase p2)
 PINBALL_SRC="$REPO_ROOT/games/Pinball"   # the user's files (docs/ps4/HANDOFF-f.md "Inputs"), never tracked
-DXVK_VERSION=2.6.2
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
 EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
-    drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll
+    drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll drive_c/windows/syswow64/d3d9.dll
     drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll
-    drive_c/windows/system32/wow64native.dll drive_c/wincb32.exe drive_c/wincb64.exe)
+    drive_c/windows/system32/wow64native.dll drive_c/wincb32.exe drive_c/wincb64.exe
+    drive_c/vk32.exe drive_c/d3d9tri32.exe drive_c/g1/dxvk.conf)
 
-# DXVK's 64-bit d3d11.dll and dxgi.dll into system32, from the release the fork pins (one pin:
-# tools/pw_install.py DXVK_RELEASES), checked by SHA-256. Native only where WINEDLLOVERRIDES says
-# so (the title's plan e sets d3d11,dxgi=n); other programs keep Wine's builtin d3d11.
+# DXVK's 64-bit d3d11.dll and dxgi.dll into system32 (milestone e) and its 32-bit d3d9.dll into
+# syswow64 (milestone g), from the release the fork pins (common.sh dxvk_archive). Native only where
+# WINEDLLOVERRIDES says so (the title's plan e sets d3d11,dxgi=n, plans g1 and g d3d9=n); other
+# programs keep Wine's builtin d3d11 and d3d9.
 add_dxvk() {
-    local pin url sha archive
-    pin="$(python3 -I - "$PROSPERO_WIN_DIR/tools/pw_install.py" "$DXVK_VERSION" <<'PY'
-import ast, sys
-tree = ast.parse(open(sys.argv[1]).read())
-for node in tree.body:
-    if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "DXVK_RELEASES" for t in node.targets):
-        url, sha = ast.literal_eval(node.value)[sys.argv[2]]
-        print(url, sha)
-PY
-)"
-    url="${pin% *}"; sha="${pin#* }"
-    [ -n "$url" ] && [ ${#sha} = 64 ] || die "no DXVK $DXVK_VERSION pin in the fork's tools/pw_install.py"
-    archive="$BUILD_DIR/downloads/dxvk-$DXVK_VERSION.tar.gz"
-    mkdir -p "$BUILD_DIR/downloads"
-    [ -f "$archive" ] || { log "downloading $url"; curl -sSfL -o "$archive.part" "$url" && mv "$archive.part" "$archive"; } ||
-        die "cannot download $url"
-    [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$sha" ] || die "$archive does not match DXVK $DXVK_VERSION's pinned SHA-256"
+    local archive
+    archive="$(dxvk_archive)"
     tar -xzf "$archive" -C "$PREFIX/drive_c/windows/system32" --strip-components=2 \
         "dxvk-$DXVK_VERSION/x64/d3d11.dll" "dxvk-$DXVK_VERSION/x64/dxgi.dll"
+    tar -xzf "$archive" -C "$PREFIX/drive_c/windows/syswow64" --strip-components=2 "dxvk-$DXVK_VERSION/x32/d3d9.dll"
 }
 
 # The test programs, the fonts and the registry check; fills EXTRA_FILES.
@@ -118,6 +108,17 @@ add_extras() {
         "$WINCB_SRC" -luser32
     x86_64-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/wincb64.exe" \
         "$WINCB_SRC" -luser32
+    # Milestone g (docs/ps4/HANDOFF-g.md): g1m's vk32.exe, vk64.exe's source for i686 (32-bit Vulkan
+    # through WoW64's placed maps), and g1's d3d9tri32.exe under DXVK's x32 d3d9.dll (add_dxvk) with
+    # the three settings of DXVK 2.6.2's built-in vampire.exe profile, which its name does not match,
+    # in C:\g1\dxvk.conf (plan g1 sets DXVK_CONFIG_FILE).
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -idirafter "$MESA_SRC_DIR/include" \
+        -o "$PREFIX/drive_c/vk32.exe" "$VK64_SRC" -luser32
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/d3d9tri32.exe" \
+        "$D3D9_SRC" -ld3d9 -luser32
+    mkdir -p "$PREFIX/drive_c/g1"
+    printf 'd3d9.deferSurfaceCreation = True\nd3d9.memoryTrackTest = True\nd3d9.maxAvailableMemory = 1024\n' \
+        > "$PREFIX/drive_c/g1/dxvk.conf"
     [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
     command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
     # Phase p2: the hardware WoW64 backend, selected per run by WINE_PS5_WOW64_CPU (patch 0611); the
