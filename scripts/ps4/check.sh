@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -58,6 +58,11 @@ and the asynchronous flip (present_mode=async, buffers=3) with shown_hz >= 59 an
 also read the title's test pattern over HDMI, 960,540 = 0,255,0 and 240,135 = 255,128,0: a frame
 of the launch's recording given with --shot (the pattern is on screen for 5 s before Wine starts; a live
 capture or the framebuffer readback cannot show it), or --no-shot.
+p5w, a step of p5 (plan p5w, the fork's tests/wine_wincb.c): windows made on the main thread and on new
+threads, every case on both (main_ok and new_ok all made), the Message class's procedure called directly on
+each (direct_main=1, direct_new=1), a CBT hook called on each (cbt_main>=1, cbt_new>=1), a new thread's send
+to a window of the main thread answered (cross=ok), exit=0 and no unresolved fault. The thread stacks' cost
+(hold_flex_kib, flex_mib*, threads_*, stack_floor_mib) is recorded, not gated, in p5w's line and p5's.
 USAGE
 }
 
@@ -78,7 +83,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -112,7 +117,7 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-5] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-5] || "$MS" == p5w ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -213,6 +218,9 @@ case "$MS" in
             elif ! awk -v m="$mean" 'BEGIN { exit !(m >= -30) }'; then FAILS+=("audio mean ${mean} dB < -30 dB")
             else NOTE="${NOTE:+$NOTE; }HDMI audio mean ${mean} dB in ${AUDIO_WINDOW}"; fi
         fi ;;
+    p5w) # Written before the first p5w launch (docs/ps4/HANDOFF-p.md): every window made on every thread.
+         word wincb; all main_ok; all new_ok; req direct_main eq 1; req direct_new eq 1; req cbt_main ge 1
+         req cbt_new ge 1; req cross eq ok; req exit eq 0; req faults_unresolved eq 0 ;;
     p3|p4) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
         req presents ge 600; req faults_unresolved eq 0; req vo_register eq ok; req vo_flip eq ok
         for h in guest_us copy_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done

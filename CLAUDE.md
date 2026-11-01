@@ -94,7 +94,15 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   fds 0-2 are EPERM; `pipe`, `socketpair` and `SCM_RIGHTS` fd passing work;
   `shm_open(SHM_ANON)` works. `sceKernelStat` by path returns dev/ino 0,
   `_fstat` on a descriptor returns them. Files under `/data` are root's.
-- Default thread stack is 64 KiB (orbis-compat raises it to 2 MiB).
+- Default thread stack is 64 KiB. orbis-compat's `pthread_create` raises any smaller request to
+  its floor, the main thread's stack size (`resolveFloor` → `mainThreadStack`: 16 MiB in this
+  title, `stack_floor_mib=16`), on a fresh attribute that drops a `pthread_attr_setstack` address.
+  Each such stack costs flexible memory: 8 live threads took 96 MiB (12 MiB each), and the free
+  flexible memory did not come back when they ended (p5w, 2026-11-01).
+  Wine's threads therefore ran their Unix side off their kernel stack, so `KeUserModeCallback`
+  refused every callback on all but the main thread: no window procedure, hook or WM_NCCREATE on
+  new threads, and no winmm sound. The fork's patch 1100 fixes this by putting the frame at the
+  kernel stack's top; `WINE_PS5_THREAD_FRAME=0` restores the old behaviour.
   `timer_create` with SIGEV_THREAD hangs. `sigaltstack` works (libkernel's and raw syscall 53,
   measured in p2) with FreeBSD's `stack_t` `{ss_sp, size_t ss_size, int ss_flags}` and
   `SS_DISABLE` 0x4; the SDK's musl header swaps `ss_size`/`ss_flags` (and has `SS_DISABLE` 2), so

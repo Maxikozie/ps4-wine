@@ -1,0 +1,6 @@
+# synthetic fixture, written before the first p5w launch (format of logs.sh: HH:MM:SS N|K text)
+18:00:01 N PW_MS start plan=p5w exe=C:\wincb32.exe stages=0/3 stopped=- launches=1 resumed=- file=/data/ps4-wine/p5w/progress.txt
+18:00:02 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+18:00:02 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2
+18:00:06 N STDOUT WINCB start bits=32 main_tid=0x24 cases=23
+18:03:06 N PS4WINE p5w wincb bits=- cpu=translator cases=- cases_ok=- main_ok=- new_ok=- direct_main=- direct_new=- cbt_main=- cbt_new=- cross=- hold_windows=- first_fail=- faults_unresolved=0 hold_flex_kib=- flex_mib_hold=- threads_created_hold=- flex_mib_start=402 flex_mib=371 threads_created=48 threads_raised=48 threads_create_failed=0 stack_floor_mib=16 thread_stats=ok wow_bound=19/19 display=ok exit=timeout build=0000000 stages=3/3 stopped=- launches=1 resumed=- session_s=186

@@ -4,7 +4,135 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 19:45: p5 in progress, blocked on a window-creation bug)
+## Resume here (2026-11-01 21:05: p5w PASSED, Pinball has sound, p5 FAIL on its underrun counter)
+
+**Console results (LOG.md 20:55, 20:56, 21:00), one package and one runtime, env.txt only:**
+
+| Launch | Result |
+|---|---|
+| L1 p5w, `WINE_PS5_THREAD_FRAME=0` | FAIL as predicted: main thread 9/9, new threads 0/14, `cbt_new=0`, direct and cross ok; the console logged `KeUserModeCallback callback 4 refused: stack 0x7e83b2d38 is not above the kernel stack 0x100be20000+0x2000`; `+syscall`: `UserCall` from the main thread only |
+| L2 p5w, 1100 on | **PASS**: 23/23, every probe; `thread frame moved to the kernel stack (stack 0x7e83b3e58, kernel stack 0x100be20000)` |
+| L3 p5, 1100 on, recorded | FAIL on `underruns=13` only (see below) |
+
+**L3 in detail:**
+- **Pinball plays sound on the PS4.** The user heard the intro and then everything: 2131 non-silent
+  grains, 1209 in the tail. The HDMI tail window averages -12.7 dB against the -30 dB rule.
+- **The segment is unchanged** (shown_hz 59.9, copy 0.95 ms, guest 0.225 ms, 0 faults), which is
+  the regression check for 1100.
+- **Why it still fails:** the underrun counter (`pw_ms_audio`, `pw_milestone_orbis.c` ~1555) counts
+  any gap of 2 grains to 1 s between two `sceAudioOutOutput` calls. That is not this plan's
+  definition (step 3 under p5: a grain sent as silence while a stream is open and the ring is
+  empty). A pause between effects with no stream open counts too, so whether the 13 (largest gap
+  576 ms) are real dropouts is not measured.
+
+**The thread stacks' cost (the user's addition):**
+- The floor is 16 MiB, and every Wine thread is raised to it (25 in p5w, 3 in p5).
+- 8 live threads took 98304 KiB of flexible memory, 12 MiB each, the same with and without 1100.
+- Free flexible memory was 431 MiB before Wine and 110 MiB with p5w's threads alive. It was still
+  110 MiB after they ended: the memory does not come back.
+- Pinball with audio ends at 252 MiB.
+- So at about 12 MiB a thread, the ~110-250 MiB left allows only some 10-20 more threads. **That is
+  a wall for g**, which runs many more threads than Pinball.
+
+**Next:**
+1. The user commits, fork and repo (p5w passed).
+2. **p5's underruns:** make the counter match the plan's definition: the driver or sink reports a
+   silent grain sent while a stream is open and its ring is empty. Log each underrun (time, gap,
+   stream open, segment or tail) and rerun p5. The rule stays `underruns=0`.
+3. **The root fix for the stack cost, before g:** orbis-compat's interposer keeps a caller's attr
+   when it carries a stack address. That is a patch to orbis-compat (MIT), applied by
+   `build.sh compat`; Wine's threads would then run on their 1 MiB kernel stack.
+   - First measure whether libkernel accepts a stack inside Wine's reserved range: a title probe,
+     before the patch.
+   - The p5w/p5 thread fields (`hold_flex_kib`, `threads_raised`, `flex_mib`) are its baseline;
+     1100 stays (it does nothing on threads that run on their kernel stack).
+4. **Not tested:**
+   - `wincb64.exe` on the console (`PS4WINE_EXE=C:\wincb64.exe`);
+   - p5w on the native CPU;
+   - suspension of, and faults inside system calls on, new threads (both changed by 1100:
+     `is_inside_syscall` now holds on them);
+   - a long run;
+   - hand play with sound.
+
+## Earlier: p5w built (2026-11-01 20:50, before the console runs)
+
+**Cause (from the source and the 19:38 log; reproduced and fixed on the host before the console):**
+- winmm's devices thread's "Message" window is aborted because no window procedure runs at all on a
+  new thread. The builtin class's procedure is user32's `MessageWndProc` (TRUE for WM_NCCREATE),
+  reached through `KeUserModeCallback`, not win32u's default procedure.
+- ntdll.prx links orbis-compat's `pthread_create`. It replaces any requested stack below its floor
+  (the main thread's size, 16 MiB here) with a fresh attribute that keeps only the detach state and the
+  guard size, so the 1 MiB kernel stack `spawn_thread` passes with `pthread_attr_setstack` is dropped.
+- A new thread's syscall frame is therefore made on that foreign stack (0x7e7xxxxxx, below the kernel
+  stack at >= 0x1000000000), and `KeUserModeCallback`'s check (`kernel_stack + 0x2000 > &frame`)
+  refuses every callback with `STATUS_STACK_OVERFLOW`, before any trace. That covers window
+  procedures, hooks, WM_GETMINMAXINFO and WM_NCCREATE, on every thread but the main one, on any CPU
+  backend, in 32 and 64 bit.
+- The 19:38 log fits: 002c's win32u locals at 0x7e719bxxx, the main thread's at 0x100010fxxx, thread
+  stacks 16 MiB apart, no `err:seh`. The "syscall 0x43 came back replaced" lines are NtContinue at
+  thread start (harmless).
+
+**Built for p5w (uncommitted; the user commits):**
+- Fork `tests/wine_wincb.c` (`wincb32.exe`/`wincb64.exe`): 23 window cases (main/new thread x
+  HWND_MESSAGE/hidden top-level x builtin "Message"/own class, ANSI and Unicode, DefWindowProc, USER
+  calls first, two windows in a row) plus probes:
+  - direct `CallWindowProcW` (no kernel callback);
+  - a per-thread CBT hook;
+  - a new thread's send to a main-thread window;
+  - 8 threads alive at once while the title samples the flexible memory.
+- Fork `tests/lab/pw_foreign_stack.c`: an `LD_PRELOAD` `pthread_create` that moves every thread with
+  a caller-set stack onto a 16 MiB stack below it, as the PS4 does.
+- Fork `wine/patches/1100-ntdll-orbis-new-thread-syscall-frame-on-kernel-stack.patch`:
+  - a thread found off its kernel stack gets its frame at that stack's top, as the first thread does;
+  - `WINE_PS5_THREAD_FRAME=0` keeps the old placement;
+  - the first such thread logs `thread frame moved to the kernel stack (stack .., kernel stack ..)` or
+    `thread frame left in place (switch off; ...)`;
+  - `KeUserModeCallback` logs its first refusal.
+  - It is a runtime condition, not an `__ORBIS__` gate, so it does nothing on the PC unless threads
+    are moved.
+- Fork `tests/test_wine_wincb.py` (in `make test`) on the host, 32 and 64 bit:
+
+  | Host run | Result |
+  |---|---|
+  | installed Wine | every HWND_MESSAGE case on every thread; top-level refused on both threads (headless) |
+  | user driver + translator | all 23 and every probe |
+  | + shim + 1100 | all 23 |
+  | + shim + `WINE_PS5_THREAD_FRAME=0` | the PS4's failure exactly: new_ok=0/14, cbt_new=0, hold_windows=0, the main thread's 9/9, direct and cross ok, the refusal line |
+
+  The fork's `wine_fiber_stacks` test agrees: it fails under the shim on the unfixed Wine
+  (`thread-growth callback=0`) and passes on the fixed one.
+- **The thread stacks' cost** (the user's addition): ntdll.prx exports `pw_wine_thread_stats`
+  (`wine/orbis/pw_wine_threads_orbis.c`, orbis-compat's `threadCounts`/`threadFailures`/
+  `threadStackFloor`). The p5 and p5w lines carry:
+  - `flex_mib_start` (before Wine) and `flex_mib` (at the line);
+  - `threads_created`, `threads_raised`, `threads_create_failed`, `stack_floor_mib`;
+  - p5w also `hold_flex_kib` (what 8 live threads took), `flex_mib_hold` and `threads_created_hold`.
+  - Recorded, not gated.
+- Title: plan `p5w` (`wow_bind`, `display`, `C:\wincb32.exe`; before p5 in `plans[]`, so p5 stays
+  the default); env.txt `PS4WINE_EXE` replaces any plan's program (`C:\wincb64.exe`).
+- Repo:
+  - `prefix.sh` builds and uploads both exes;
+  - `check.sh p5w` (rule written before the first run: `main_ok` and `new_ok` all made,
+    `direct_main=1 direct_new=1 cbt_main>=1 cbt_new>=1 cross=ok exit=0 faults_unresolved=0`);
+  - `tests/check_p5w_test.sh` + 4 fixtures;
+  - the p5 fixtures carry the new fields.
+
+**Next, one package, launches by env.txt only:**
+- **L1:** `PS4WINE_MILESTONE=p5w`, `WINE_PS5_THREAD_FRAME=0`, `WINEDEBUG=...,+syscall`. Expected
+  FAIL in the pattern above, with the "left in place" and "refused" lines.
+- **L2:** the same without the switch. Expected PASS.
+- **L3:** `PS4WINE_MILESTONE=p5`, recorded: Pinball's sound, and the segment fields as the regression
+  check for a change that touches every Wine thread.
+- **(L4)** `PS4WINE_EXE=C:\wincb64.exe` on p5w.
+
+**Root fix for later (not built):** orbis-compat's interposer could keep a caller's attr when it
+carries a stack address (its own comment says a caller that chose its own stack wants no
+interference). That would be a patch to orbis-compat (MIT) applied by `build.sh compat`; Wine's
+threads would then run on their 1 MiB kernel stack with no 16 MiB pthread stack. Unmeasured: whether
+libkernel accepts a stack inside Wine's reserved range. The p5w/p5 thread-stack fields are its
+baseline.
+
+## Earlier: p5's first four launches (2026-11-01 19:45, blocked on the window-creation bug)
 
 **p5 so far (LOG.md 19:34-19:45, four launches, all FAIL `grains_nonzero=0`):**
 - **The port works:** `sceAudioOutOpen` with the SYSTEM user 0xFF opens at once (handle 0x20000007);

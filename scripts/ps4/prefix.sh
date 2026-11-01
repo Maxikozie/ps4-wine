@@ -57,6 +57,7 @@ VK64_SRC="$PROSPERO_WIN_DIR/tests/wine_vk64.c"
 D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
 HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
 WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
+WINCB_SRC="$PROSPERO_WIN_DIR/tests/wine_wincb.c"   # phase p5 step p5w: windows and callbacks on new threads
 WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
 W64N_DLL="$PROSPERO_WIN_DIR/.deps/wow64native/x86_64-windows/wow64native.dll"   # tools/build_wow64native.sh (phase p2)
 PINBALL_SRC="$REPO_ROOT/games/Pinball"   # the user's files (docs/ps4/HANDOFF-f.md "Inputs"), never tracked
@@ -65,7 +66,7 @@ FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
 EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
     drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll
     drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll
-    drive_c/windows/system32/wow64native.dll)
+    drive_c/windows/system32/wow64native.dll drive_c/wincb32.exe drive_c/wincb64.exe)
 
 # DXVK's 64-bit d3d11.dll and dxgi.dll into system32, from the release the fork pins (one pin:
 # tools/pw_install.py DXVK_RELEASES), checked by SHA-256. Native only where WINEDLLOVERRIDES says
@@ -111,6 +112,12 @@ add_extras() {
         "$HELLO32_SRC"
     i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/wow32.exe" \
         "$WOW32_SRC" -lgdi32 -luser32
+    # Phase p5 step p5w: windows and callbacks on the main thread and on new threads, 32- and 64-bit
+    # (plan p5w runs wincb32.exe; env.txt's PS4WINE_EXE=C:\wincb64.exe the other).
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/wincb32.exe" \
+        "$WINCB_SRC" -luser32
+    x86_64-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/wincb64.exe" \
+        "$WINCB_SRC" -luser32
     [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
     command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
     # Phase p2: the hardware WoW64 backend, selected per run by WINE_PS5_WOW64_CPU (patch 0611); the
@@ -136,7 +143,7 @@ add_extras() {
     if [ -n "$menu" ] && { [ "$menu" -lt 0 ] || [ "$menu" -gt 64 ]; }; then
         die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
     fi
-    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, wow32.exe $(stat -c %s "$PREFIX/drive_c/wow32.exe") bytes and wowprospero.dll, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, wow32.exe $(stat -c %s "$PREFIX/drive_c/wow32.exe") bytes and wowprospero.dll, wincb32.exe and wincb64.exe, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
 }
 
 # put FILES... (relative to the prefix) and verify their sizes.
