@@ -16,7 +16,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p4)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p5)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
@@ -295,6 +295,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_p2_test.sh"
     "$REPO_ROOT/tests/check_p3_test.sh"
     "$REPO_ROOT/tests/check_p4_test.sh"
+    "$REPO_ROOT/tests/check_p5_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the

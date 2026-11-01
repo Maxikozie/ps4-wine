@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|p2|p3|p4|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -20,6 +20,10 @@ usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|p2|p3|p4|g|h> [-
                a PNG fbshot.sh made), and reports a pass as "PASS (framebuffer)": the rendered frame
                is checked, the HDMI output is not
   --note TEXT  free text for the last column of the LOG.md line
+  --audio WAV --audio-window S:D
+               p5: the WAV beside the launch's recording (view.sh --record) and the window, start S
+               and length D in seconds from the recording's start, that holds the scripted tail
+  --no-audio   p5: skip the HDMI audio rule ("PASS (no audio)"; the rule is still owed)
 Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
                 (orange marker: swapped red and blue fail it); d1 the same two on the title's VideoOut
                 test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
@@ -59,7 +63,7 @@ USAGE
 
 [ $# -ge 1 ] || { usage; exit 1; }
 MS="$1"; shift
-LOG=""; SHOT=""; NOSHOT=0; FB=0; NOTE=""
+LOG=""; SHOT=""; NOSHOT=0; FB=0; NOTE=""; AUDIO=""; AUDIO_WINDOW=""; NOAUDIO=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --log) LOG="$2"; shift 2 ;;
@@ -67,12 +71,19 @@ while [ $# -gt 0 ]; do
         --no-shot) NOSHOT=1; shift ;;
         --fb) FB=1; shift ;;
         --note) NOTE="$2"; shift 2 ;;
+        --audio) AUDIO="$2"; shift 2 ;;
+        --audio-window) AUDIO_WINDOW="$2"; shift 2 ;;
+        --no-audio) NOAUDIO=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
+if [ "$MS" = p5 ]; then
+    { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
+        die "p5: give --audio WAV --audio-window S:D (the recording's sound and the tail's window) or --no-audio"
+fi
 if [[ "$MS" == p[34] ]]; then
     [ "$FB" = 0 ] || die "$MS: the pattern is checked over HDMI only (--shot FRAME from the recording)"
     [ -n "$SHOT" ] || [ "$NOSHOT" = 1 ] || die "$MS: give --shot FRAME (the recording's frame of the test pattern) or --no-shot"
@@ -186,6 +197,22 @@ case "$MS" in
         for h in guest_us copy_us keep_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done ;;
     p2) word bench; word pinball; req native_caps eq 7; req cpu eq native; req end eq segment; req seg_s ge 60
         req inputs eq 0; req faults_unresolved eq 0 ;;
+    p5) word bench; word pinball; req audio_open eq ok; req audio_user eq system; req end eq segment; req seg_s ge 60
+        req inputs eq 0; req faults_unresolved eq 0
+        # G: Pinball's shortest WAV effect (SOUND112.WAV, 58 ms) is 10.9 grains of 256 frames at 48 kHz.
+        req grains_nonzero ge 10; req underruns eq 0
+        # The rate gate's branch, fixed when p4 passed (2026-11-01 18:40): p4's own rule on p4's path.
+        req present_mode eq async; req shown_hz ge 59
+        if [ "$NOAUDIO" = 0 ] && [ -n "$AUDIO" ]; then
+            # D: the tail's window averages >= -30 dB on the stick's input; two silent PS4 recordings
+            # measured -39.5 and -36.9 dB mean (peaks -25.9 and -19.5: the input is noisy, so the
+            # mean, not the peak) before the first p5 run.
+            mean="$(ffmpeg -hide_banner -nostats -ss "${AUDIO_WINDOW%%:*}" -t "${AUDIO_WINDOW#*:}" -i "$AUDIO" \
+                    -af volumedetect -f null - 2>&1 | sed -n 's/.*mean_volume: \(-*[0-9.]*\) dB.*/\1/p' | tail -n1)"
+            if [ -z "$mean" ]; then FAILS+=("audio: no level read from $(basename "$AUDIO")")
+            elif ! awk -v m="$mean" 'BEGIN { exit !(m >= -30) }'; then FAILS+=("audio mean ${mean} dB < -30 dB")
+            else NOTE="${NOTE:+$NOTE; }HDMI audio mean ${mean} dB in ${AUDIO_WINDOW}"; fi
+        fi ;;
     p3|p4) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
         req presents ge 600; req faults_unresolved eq 0; req vo_register eq ok; req vo_flip eq ok
         for h in guest_us copy_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done
@@ -221,7 +248,8 @@ if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 0 ]; then
 fi
 
 if [ "${#FAILS[@]}" -eq 0 ]; then
-    if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"
+    if [ "$MS" = p5 ] && [ "$NOAUDIO" = 1 ]; then emit "PASS (no audio)" "$LINE"
+    elif [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"
     elif [ "$HAS_PIXEL" = 1 ] && [ "$FB" = 1 ]; then emit "PASS (framebuffer)" "$LINE"
     else emit PASS "$LINE"; fi
     exit 0

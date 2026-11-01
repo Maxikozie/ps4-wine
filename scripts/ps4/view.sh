@@ -21,7 +21,9 @@ usage: scripts/ps4/view.sh [--device DEV] [--sink NAME] [--no-audio] [--latency 
                  stays as live as without it); for short-lived pictures, a frame is then taken
                  with ffmpeg -ss T -i FILE -frames:v 1 F.png. ~10 MB/s (~0.6 GB a minute): the
                  recording stops by itself after --record-max seconds (default $RECORD_MAX), and
-                 earlier with --stop-record; the view goes on either way.
+                 earlier with --stop-record; the view goes on either way. With sound, the stick's
+                 audio goes to FILE with .wav beside it (pw-record from its PipeWire source,
+                 48 kHz S16 stereo), stopped with the recording.
   --record-max S the recording's limit in seconds
   --stop-record  stop the running viewer's recording now (through its mpv IPC socket), keep the view
 Keys in mpv: f fullscreen, space pause, s screenshot (PNG into logs/), q quit.
@@ -33,8 +35,11 @@ USAGE
 DEFAULT_DEV=/dev/v4l/by-id/usb-MACROSILICON_2109-video-index0
 DEV="${PS4_CAPTURE_DEV:-$DEFAULT_DEV}"; SINK="${PS4_AUDIO_SINK:-}"; AUDIO=1; LATENCY=20; RECORD=""; RECORD_MAX=300
 IPC="${XDG_RUNTIME_DIR:-/tmp}/ps4-view.sock"
-# Clears mpv's stream-record through the IPC socket: the file is closed, the view goes on.
+AUDIO_PID_FILE="$IPC.audio-record.pid"   # the WAV sidecar's pw-record (phase p5)
+# Clears mpv's stream-record through the IPC socket: the file is closed, the view goes on; the
+# WAV sidecar's recorder ends with it.
 stop_record() {
+    if [ -f "$AUDIO_PID_FILE" ]; then kill "$(cat "$AUDIO_PID_FILE")" 2>/dev/null || true; rm -f "$AUDIO_PID_FILE"; fi
     python3 -I -c 'import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
@@ -59,9 +64,11 @@ done
 need_cmd mpv
 [ -e "$DEV" ] || { log "capture device $DEV does not exist; plug in the HDMI stick or pass --device"; exit 3; }
 
-LOOP_PID=""; TIMER_PID=""
+LOOP_PID=""; TIMER_PID=""; AREC_PID=""
 cleanup() {
     [ -n "$LOOP_PID" ] && kill "$LOOP_PID" 2>/dev/null || true
+    [ -n "$AREC_PID" ] && kill "$AREC_PID" 2>/dev/null || true
+    rm -f "$AUDIO_PID_FILE"
     [ -n "$TIMER_PID" ] && kill "$TIMER_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -77,6 +84,14 @@ if [ "$AUDIO" = 1 ]; then
 fi
 
 mkdir -p "$LOGS_DIR"
+# The stick's sound beside the recording, as RECORD with .wav (mpv's stream-record holds the video
+# only: the view runs --no-audio). A second reader of the PipeWire source, not of the V4L2 node.
+if [ -n "$RECORD" ] && [ "$AUDIO" = 1 ] && [ -n "${SOURCE:-}" ] && command -v pw-record >/dev/null; then
+    pw-record --target "$SOURCE" --rate 48000 --channels 2 --format s16 "${RECORD%.*}.wav" >/dev/null 2>&1 &
+    AREC_PID=$!
+    echo "$AREC_PID" > "$AUDIO_PID_FILE"
+    log "recording the stick's sound to ${RECORD%.*}.wav"
+fi
 if [ -n "$RECORD" ]; then
     (sleep "$RECORD_MAX"; stop_record 2>/dev/null && log "recording stopped after ${RECORD_MAX} s (--record-max)") &
     TIMER_PID=$!

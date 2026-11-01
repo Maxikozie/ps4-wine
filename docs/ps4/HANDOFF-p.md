@@ -4,7 +4,35 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 19:17: p1-p4 done; p5 next)
+## Resume here (2026-11-01 19:45: p5 in progress, blocked on a window-creation bug)
+
+**p5 so far (LOG.md 19:34-19:45, four launches, all FAIL `grains_nonzero=0`):**
+- **The port works:** `sceAudioOutOpen` with the SYSTEM user 0xFF opens at once (handle 0x20000007);
+  milestone a's 0x809b0001 was the initial user. Explained and confirmed.
+- **The driver works:** `wineps5.prx` (now built by `build_wine_orbis.sh`) loads, mmdevapi selects it
+  ("priority Preferred", device `0,ps5`, 48 kHz stereo), the title's sink is set. The driver's name
+  stays `ps5` (patch 0120's default): renaming to `orbis` as ARCHITECTURE §4.11 says would change
+  nothing that works.
+- **What fails:** Pinball's `waveOutOpen` starts winmm's devices thread, whose
+  `CreateWindowW("Message", HWND_MESSAGE)` is aborted by WM_NCCREATE (the window procedure answers 0;
+  `+win` trace: window 0x10052 made under the message parent, then "aborted by WM_NCCREATE"). So
+  waveOutOpen fails, Pinball retries (one thread per try), no stream starts, no grain is played.
+- **Not the translator:** the same on the native CPU (19:45). On the PS4, a window procedure called
+  on a freshly created 32-bit thread answers WM_NCCREATE with 0; Pinball's main thread is fine.
+- **Suspects:** the user-mode callback (KeUserModeCallback into the 32-bit side) on a new thread, or
+  patch 0910 (fresh worker threads cache the desktop's handles without USER initialization).
+- **Next:** a minimal 32-bit program (a message-only window on the main thread, then on a new
+  thread, the WM_NCCREATE result logged) on the host and on the console, to split the two suspects
+  without Pinball.
+
+**Fixed before p5's first run (thresholds):** G = 10 non-silent grains (Pinball's shortest effect,
+SOUND112.WAV, 58 ms = 10.9 grains); the HDMI rule on the mean, not the peak: the tail's window
+>= -30 dB (two silent recordings of the stick: -39.5 and -36.9 dB mean, peaks -25.9 and -19.5);
+the rate gate's branch is p4's (passed): `shown_hz>=59` on vo720 async; no audio-off launch needed.
+New tooling: `view.sh --record` writes the stick's sound beside the video (`X.wav`, pw-record);
+`check.sh p5 --audio WAV --audio-window S:D | --no-audio`; `tests/check_p5_test.sh`.
+
+## Earlier: p2 (2026-11-01 19:17)
 
 **p2 passed** (LOG.md 19:17): Space Cadet Pinball's 32-bit code ran natively on the PS4 for the whole
 segment: `native_caps=7 cpu=native faults_unresolved=0`, 3597 presents in 60 s. Three launches:
@@ -42,7 +70,7 @@ violations, illegal instructions), several guest threads doing real work, thread
 run, hand play. For g: Bloodlines' profile can name the native CPU (MILESTONES g note); the
 translator stays the fallback (0614).
 
-**Next:** the user commits; then p5 (audio on sceAudioOut).
+**Next (then):** the user commits; then p5 (audio on sceAudioOut).
 
 ## Earlier: p1, p3, p4 (2026-11-01 18:40)
 
