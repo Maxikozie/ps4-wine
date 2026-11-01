@@ -31,6 +31,7 @@ PS4WINE f pinball cpu=translator frames=3862 fps=54.0 faults_unresolved=0 native
   3. Optional: an Orbis audio driver (`wine/wineps5` on `sceAudioOut`, ARCH section 4.11).
   4. Then g/h with Bloodlines (installed under `games/`, see "Games on the host"); MILESTONES names
      HL2 for g.
+  - **Superseded 2026-11-01 by `HANDOFF-p.md`:** f4 became p2, audio p5, and g is Bloodlines.
 
 ## Earlier: f1 and f2 (2026-11-01 16:10)
 

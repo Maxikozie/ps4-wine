@@ -154,7 +154,7 @@ case "$MS" in
         # gdi64.exe's window built for i686 (wow32.exe's second part): d2's picture on the 800x600 desktop.
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "780,410=255,128,0") ;;
     f) word pinball; req cpu eq translator; req frames ge 600; req faults_unresolved eq 0 ;;
-    g) word hl2; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
+    g) word vtmb; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
        # TODO(milestone h): list /data/ps4-wine/prefix/.../SAVE over FTP and require a save newer than the session start.
        log "h: the FTP save-file check is not implemented yet; the log fields are checked"; ;;

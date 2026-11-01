@@ -162,7 +162,7 @@ Each step has a single, unambiguous pass/fail check that Claude Code can script.
 | d | winemine / notepad (GDI) | Minesweeper playable with DS4 | Display path, input |
 | e | 64-bit D3D11 sample via DXVK | Frame presented, no GPU hang | Memory arena sizing |
 | f | 32-bit EXE via translator, then native WoW64 probe | Pinball runs. Log equivalent of `caps=7` for native | Executable memory (JIT API), compat selectors |
-| g | 32-bit D3D9 Source game (HL2) with batching | Stable 30+ FPS on the Pro, crossings per frame logged | CPU budget, shader-compile stalls (keep the RADV cache) |
+| g | 32-bit D3D9 Source game (HL2) with batching (retargeted to Bloodlines 2026-11-01, see MILESTONES) | Stable 30+ FPS on the Pro, crossings per frame logged | CPU budget, shader-compile stalls (keep the RADV cache) |
 | h | Bloodlines (GOG + UP) | New game → Santa Monica hub, save/load, 30-minute session | Memory peaks, hub load hitches, relocation (#737) |
 
 **Practical advice:**

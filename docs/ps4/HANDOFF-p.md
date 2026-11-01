@@ -1,0 +1,271 @@
+# Hand-off: phase p (performance and audio, before milestone g)
+
+Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). Read `CLAUDE.md`,
+then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
+`f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
+
+**Status: plan only.** Nothing of p is built, deployed or launched. p1 starts when the user says so.
+
+Phase p does not gate g unless a rule says so. The one link: g runs on the native CPU when p2
+passes, else on the translator.
+
+## Known (from the code and LOG.md; stated, not re-derived)
+
+**The present path today** (fork `native/orbis/`):
+- `pw_ms_present` (`pw_milestone_orbis.c:680`) swizzles BGRA→RGBA per pixel and integer-scales
+  960x540 to 1920x1080 on the CPU, under `present_lock`.
+- On every present that draws, it also copies the whole source frame into `last_drawn`
+  (`pw_milestone_orbis.c:742-745`, 2 MB at 960x540), kept for the framebuffer readback.
+- `pw_videoout_orbis_flip` (`pw_videoout_orbis.c:81`) submits `FLIP_VSYNC` and busy-waits on
+  `sceVideoOutIsFlipPending` (up to 100 × 1 ms `nanosleep`) inside that lock. Presents are already
+  vsync-locked and block the caller: `present_ms=16.6` in the f line. Two buffers.
+
+**What the f line says about time** (LOG 2026-11-01 16:52):
+- 3862 presents in 71 s = 54.4/s, an 18.4 ms frame, 16.6 ms of it inside the present. The guest
+  gets ~1.8 ms per frame. The translator is not Pinball's bottleneck.
+- A speed gate on guest time would test ~0.2 ms against run-to-run noise. Guest time is recorded in
+  every p line and gated nowhere.
+- fps (54) sits under a 60 Hz ceiling, and the GDI driver presents only on change. fps is not a CPU
+  metric; p compares per-flush times, never fps.
+- A "present" is a win32u surface flush, not a game frame. If Pinball's table and score panel flush
+  separately, one game frame costs two copies and two vblank waits, which could explain part of the
+  54/s. Unmeasured: p1 records it.
+- Unblocked, Pinball can exceed 60 frames/s: on the host it ran ~63 fps in attract mode (2517
+  frames in 40 s, `HANDOFF-f.md` "Host evidence"). On the Jaguar this is unmeasured; p4's gate
+  relies on it.
+
+**The Vulkan path is different** (scope of p3/p4):
+- p3 and p4 change the GDI sink only. D3D9 in g presents through mesa-ps4's `wsi_orbis.c`, which
+  already returns after `sceVideoOutSubmitFlip` and throttles on a flip slot
+  (`wsi_orbis_wait_for_flip_slot`: proceed while `numFlipPending < count-1`, `sceKernelUsleep(500)`,
+  2 s bound).
+- Measured by mesa-ps4, not by us: the display accepts several pending flips, 21 in ~110 ms, and then
+  the queue overflowed and presentation failed (`refs/mesa-ps4/src/vulkan/wsi/wsi_orbis.c:398`,
+  `:549`). An async present needs the slot limit.
+- The same file says "nanosleep does not return on this platform". Our flip loop's `nanosleep` did
+  return in f. The two disagree, so new waits use `sceKernelUsleep`.
+
+**VideoOut sizes** (milestone a, `probes/probe.c:705-718`): a 1280x720 A8R8G8B8_SRGB set registered
+(`vo_720p=ok`), a 3840x2160 set was refused (`0x80290005`). Registering a smaller set is measured;
+flipping one is not.
+
+## The benchmark (every p launch)
+
+- **Plan `pN`** (`PS4WINE_MILESTONE=pN` in env.txt) is plan `f`'s Pinball with the pad bindings off.
+- **Segment:** warm-up W = 20 s from Pinball's first present, then N = 60 s in attract mode with no
+  input. The same W and N every run, so runs compare like with like.
+- **No input:** the title counts every pad event inside the segment; `inputs=0` is required, so a
+  touched pad fails the run instead of skewing it.
+- **After the segment** the line is sent. The pad bindings then switch on, and the user may play.
+  Hand play goes to a `PW_MS play` record and the LOG notes, never into a comparison.
+- **Run conditions**, noted in each LOG line: viewer open, no other app running, desktop 960x540.
+
+## p1's instrumentation (stays in every later build)
+
+Each step is re-measured on the same segment with the same fields.
+
+Per present (= per flush), in integer µs (a precision choice):
+
+| Metric | From | To |
+|---|---|---|
+| `guest` | the previous present's exit | this present's entry (translated code + Wine + the guest's own waits) |
+| `copy` | swizzle + scale start (p3: its copy) | end |
+| `keep` | the `last_drawn` copy's start | end (its own field, not inside `copy`) |
+| `flip` | flip call entry | return (the time the caller spends there) |
+| `frame` | present entry | next present entry |
+
+- Fixed 100 µs buckets up to 100 ms plus an overflow bucket, no allocation per frame. Exact
+  min/avg/max; p95 from the buckets.
+- Line fields: `guest_us_min guest_us_avg guest_us_p95 guest_us_max`, the same four for `copy_us`,
+  `keep_us` and `flip_us`, plus `frame_us_avg` and `presents`.
+- `guest_cpu_us_avg` from `clock_gettime(CLOCK_THREAD_CPUTIME_ID)` on the presenting thread,
+  `thread_cpu=ok|err:<rc>` (unmeasured on Orbis). It separates the guest's CPU time from its waits.
+- **Flushes:** `flush_hz` (presents per second over the segment), the dirty area per flush
+  (`dirty_px_avg`, `dirty_px_max`) and `full_flushes`. `pw_ms_present` receives the whole frame and
+  no rectangle, so the dirty bounds are counted in the user driver at the flush: a field added to
+  the sink call, or a driver counter read like `pw_wow_stats`. With the histograms this shows
+  whether one game frame is several flushes.
+- The sparse histograms go to netlog as `PW_MS hist <metric> ...` records for plots, not into the
+  line.
+
+## Sub-steps
+
+Each step: its own `PS4WINE pN` line, a `check.sh pN` rule and `tests/check_pN_test.sh` with
+`tests/fixtures/pN-*.log` before its first run, one LOG line per launch. Every line also carries
+p1's fields, `build=`, `session_s` and the stage fields as in f.
+
+| Step | What | Rule (`check.sh pN`) |
+|---|---|---|
+| p1 | Measure. 3 launches of one package, for the run-to-run spread | `PS4WINE p1 bench pinball cpu=translator seg_s=60 inputs=0 presents>=600 faults_unresolved=0`, every histogram field present. No performance threshold |
+| p2 | Native WoW64 | `PS4WINE p2 native native_caps=7 cpu=native seg_s=60 inputs=0 faults_unresolved=0 segment=done` |
+| p3 | Drop the CPU copy | `PS4WINE p3 vo540 vo_register=ok vo_flip=ok seg_s=60 inputs=0 faults_unresolved=0 copy_us_avg<=T3` **and** HDMI 960,540 = 0,255,0, 240,135 = 255,128,0 |
+| p4 | Non-blocking present | `PS4WINE p4 async buffers=3 seg_s=60 inputs=0 faults_unresolved=0 shown_hz>=59 flip_errors=0` **and** p3's HDMI pattern check |
+| p5 | Orbis audio | `PS4WINE p5 audio driver=orbis open=ok seg_s=60 inputs=0 faults_unresolved=0 grains_nonzero>=G underruns=0`, the rate gate below, **and** the recording's audio peak >= D dBFS in the tail's window |
+
+### p1: measure
+
+- The instrumentation above, nothing else changed. The p1 line records numbers only.
+- Three launches of the same package give the spread s of each metric (below), which the thresholds
+  are built on.
+
+### p2: native WoW64
+
+- f4's readiness probe: an Orbis variant of 0883 as its own patch, not 0883/0903 widened wholesale.
+- **First stage, before anything else:** does `sigaltstack` work as syscall 53 through libkernel's
+  `syscall` stub? (`sigaltstack` returns -1 through libc, c and d.) Field `altstack53=ok|err:<rc>`.
+- The stub is found by checking its bytes (`mov $N,%rax; mov %rcx,%r10; syscall; jb; ret`), as 0883
+  does (fork `docs/native-wow64-provider.md`), not used as a fixed `getppid+10` offset (that is
+  only where a measured it).
+- Then 0883's checks: raw `sigaction` (416) through the stub, the frame check with a marked MXCSR,
+  the aligned alternate stack. Caps 0 on any mismatch; the translator runs either way (0614).
+- With `native_caps=7`, the segment runs on `cpu=native`.
+- **Gate: correctness only** (`native_caps=7`, `faults_unresolved=0`, `segment=done`). `guest_us_*`
+  and `guest_cpu_us_avg` are recorded against p1, not gated: with ~1.8 ms of guest time per frame,
+  noise would decide any speed gate.
+- caps < 7 is a FAIL that names the failing check. g and h then stay on the translator.
+
+### p3: drop the CPU copy
+
+- **First try** 960x540 A8R8G8B8_SRGB linear VideoOut buffers. The driver's BGRA is that format's
+  memory order, so a row `memcpy` replaces the swizzle and the scale.
+- Whether VideoOut scales a smaller buffer to 1080p is unmeasured (see "VideoOut sizes").
+- **The pitch is a parameter:** 960, with 1024 as the fallback if 960 is refused (then the copy is
+  row by row).
+- **The keep copy:** p3 states whether vo540 keeps the `last_drawn` copy (`keep_us`) or moves it,
+  for example by taking the readback from the 960x540 scan-out buffer itself.
+- **Test pattern, same launch, before Wine:** the title flips a 960x540 version of d1's pattern for
+  3 s, recorded over HDMI. The green centre is at 480,270 and a 32x32 orange square is centred on
+  120,67, so a 2× scale puts them on HDMI 960,540 and 240,135. A buffer shown unscaled in the
+  top-left corner fails the check, as it should. Fields `vo_register`, `vo_flip`, then the segment.
+- **GPU (RADV) only if VideoOut cannot scale.** It loads a 1 GiB arena into a plan that is RADV-free
+  today, so that path gets its own decision, not a p3 retry.
+
+### p4: non-blocking present
+
+- 3 buffers. Submit `FLIP_VSYNC` and return.
+- Wait only for a flip slot, when `numFlipPending >= count-1`: the WSI's rule. The wait happens
+  outside `present_lock`, with `sceKernelUsleep` and a 2 s bound.
+- **Path:** p3's result, vo540 if p3 passed, else today's scale path, fixed before p4's run.
+- **Gate:** `shown_hz>=59` (flips completed per second over the segment, from the flip status) and
+  `flip_errors=0`. The visible problem today is missed vblanks: 54/s, not 60.
+- `flip_us_*` and `slot_waits` are recorded, not gated. Once the present returns before vblank,
+  Pinball can outrun 60/s and the caller waits for a slot instead, and that wait lands in `flip_us`.
+- Same HDMI pattern check as p3.
+
+### p5: Orbis audio on sceAudioOut
+
+1. **Explain milestone a's `sceAudioOutOpen` = 0x809b0001 first.**
+   - The probe (`probes/probe.c:727`) called `sceAudioOutOpen(initial user 481013703, MAIN, 0, 256,
+     48000, S16 stereo)` (`logs/20261030-001125-a.log`). Its klog at line 602 has
+     `[AudioOut] Error:sceMbusAddHandleByUserId 0x20000007`: the system side refusing that user id.
+   - OpenOrbis's sample (`refs/OpenOrbis-PS4-Toolchain/samples/audio-wav/audio-wav/main.cpp:24,38`)
+     and nx-on-orbis's eden patch 0002 (`UserIdSystem = 0xFF`, the sequence ARCHITECTURE §4.11
+     calls clean) open with the SYSTEM user 0xFF.
+   - orbis-porting-kit `services/audio/orbis_audio.h:31,115` records 0x809b0001 for a real user id
+     instead of SYSTEM.
+   - Hypothesis: the user id. The p5 launch's first stage opens with 0xFF (`open=ok user=system`);
+     the initial user is tried again only if 0xFF fails.
+2. **Facts from `orbis_audio.h`** (facts, no code taken):
+   - 48000 Hz only; the grain is a multiple of 256, from 256 to 2048;
+   - `sceAudioOutOutput` blocks and is the clock: it runs on its own thread, never a render thread;
+   - `sceAudioOutSetVolume` after Open (the port can open silent);
+   - open once and never close (close and reopen is disputed: PORT_FULL after eight cycles);
+   - one audio output stream per process (`orbis_audio.h:35`): `wineorbis` mixes every Wine stream
+     into the one port it opens once.
+3. **The title's `native/orbis/pw_audio_orbis.c`**, from `native/pw_audio_ps5.c` with the same
+   256-frame grain contract. Counters `grains`, `grains_nonzero` and `underruns` (a grain sent as
+   silence while a stream is open and the ring is empty), counted from the first grain to the line.
+4. **`wine/wineps5` ported and renamed `wineorbis`** (ARCHITECTURE §4.11), built by
+   `build_wine_orbis.sh`. Patch 0120's default driver is `orbis` on Orbis (today mmdevapi logs "No
+   driver from ps5 could be initialized").
+5. **Host first:** the fork's driver fixture plays Pinball's scripted tail into a host sink (WAV)
+   and counts nonzero grains. That count sets G.
+6. **The launch:** the segment as in p1, then a scripted tail of title-injected keys (F2 new game,
+   space held 1 s and released, Z and `/` flippers) so Pinball plays its WAV effects.
+7. **HDMI audio:** `view.sh --record X.mkv` records video only (mpv runs `--no-audio`; the sound
+   goes through `pw-loopback`). Add an `X.wav` sidecar recorded from the stick's PipeWire source
+   (`pw-record`: a second reader of the audio source, not of the V4L2 node). `check.sh p5` reads its
+   peak with ffmpeg `volumedetect`. HDMI audio does reach the laptop: the user heard the home screen
+   (LOG 2026-11-01 16:44).
+8. **One package, two launches:** `PS4WINE_AUDIO=off|on` in env.txt. The off launch is the baseline
+   for the rate gate, on the same present path.
+9. **Gate:** `open=ok`, `grains_nonzero>=G`, `underruns=0`, the rate gate (thresholds), the HDMI
+   peak. Guest time is recorded, not gated: WaveMix mixes in translated guest code, so audio may
+   cost more than ~0.2 ms and still play fine.
+10. **MIDI music:** `midi=untested`. It needs a synth that Orbis Wine lacks.
+
+## Thresholds
+
+Written here before each step's first run, from measured numbers, and never moved after seeing that
+step's data. Spread s = (max − min) / mean of a metric over p1's 3 launches.
+
+| Step | Threshold | Rule | Value |
+|---|---|---|---|
+| p2 | none | correctness only | – |
+| p3 | T3 for `copy_us_avg` | p1's copy avg × (1 − max(0.10, 3s)). The copy is expected to be the largest cost in the present besides the flip wait; p1 confirms or refutes that before T3 is written | after p1 |
+| p4 | `shown_hz` | >= 59, fixed now from the 60 Hz display (a: 60.5 Hz, d1: 59.9 Hz), not from data | 59 |
+| p5 | rate gate | p4 passed: `shown_hz>=59`. p4 failed: `flush_hz` >= the audio-off launch's `flush_hz` − 3 × p1's `flush_hz` spread (in Hz; p1 runs sync and has no `shown_hz`). The branch is fixed when p4's verdict is in | after p4 |
+| p5 | G for `grains_nonzero` | the host run of the same tail | after the host run |
+| p5 | D (dBFS) for the HDMI peak | above the level of a recording with the PS4 silent | after that recording |
+
+## Batching
+
+- **p1:** one package, 3 launches.
+- **p3 and p4:** one package with env.txt toggles: `PS4WINE_MILESTONE=p3|p4`,
+  `PS4WINE_PRESENT_PATH=scale|vo540`, `PS4WINE_PRESENT_MODE=sync|async`. Several variants per
+  install, each launch its own LOG line. A p1 re-measure (scale + sync) can run from the same
+  package.
+- **p2:** its own package (patch work).
+- **p5:** one package, `PS4WINE_AUDIO=off|on`, two launches, two lines.
+
+## Host first, tests
+
+- `tests/check_pN_test.sh` with `tests/fixtures/pN-*.log` per step: a pass, input during the
+  segment, a missing histogram field, a threshold miss, stage records only (NOLOG naming the
+  stages).
+- p3/p4: HDMI pixels from generated 1920x1080 dumps, as `check_f_test.sh` makes them (scaled
+  pattern passes, unscaled top-left pattern and swapped red/blue fail).
+- p5: generated WAVs (a sine passes, silence fails).
+- `build.sh probe-test` runs them; `check.sh`'s STAGES branch includes `p[1-5]`.
+- The histogram and percentile code is host-tested in the fork.
+
+## Not tested / unmeasured (say so in the LOG lines)
+
+- VideoOut scaling a 960x540 buffer, and flipping any non-1080p set;
+- A8R8G8B8's colour order on HDMI;
+- a 960-pixel pitch;
+- `CLOCK_THREAD_CPUTIME_ID` on Orbis;
+- syscall 53 (`sigaltstack`) through libkernel's stub;
+- attract mode's run-to-run stability (p1 measures it);
+- how many flushes one Pinball frame takes, and their dirty area (p1 records it);
+- whether Pinball outruns 60/s on the Jaguar once the present is async;
+- MIDI.
+
+## Milestone g after p
+
+- The rewritten g (MILESTONES): Bloodlines from `games/bloodlines-up`, `Vampire.exe -game
+  Unofficial_Patch`, rule `PS4WINE g vtmb batch=1 crossings_per_frame<=2000 fps_avg>=20
+  session_s>=300 faults_unresolved=0`; "gameplay reached, batching on, 300 s".
+- Its unmeasured risks, moved from h: VirtualAlloc at fixed addresses, the large-address (2 GB RAM)
+  fix, `Vampire.exe` relocated off the eboot's 0x400000.
+- What g takes from p:
+  - p2 decides the CPU: native when p2's correctness fields pass (`native_caps=7`,
+    `faults_unresolved=0`, segment done); speed plays no part.
+  - p5 gives sound (Miles goes through Wine's audio); g's rule does not gate it.
+  - p3/p4 are GDI-sink only; g's D3D9 presents through `wsi_orbis.c`.
+
+## Iteration loop (as in f)
+
+```
+scripts/ps4/build.sh wine --skip-host        # Orbis PRXs
+scripts/ps4/runtime.sh --prx-only            # PRXs + *.bind.txt to /data
+scripts/ps4/build.sh title                   # when native/orbis changed
+cp dist/ps4-wine-<id>.pkg dist/ps4-wine-<id>-<tag>.pkg && scripts/ps4/deploy.sh dist/ps4-wine-<id>-<tag>.pkg
+scripts/ps4/logs.sh --label pN --expect 'PS4WINE pN ' --timeout 600 &    # before the user launches
+scripts/ps4/view.sh --sink ... --record logs/<ts>-pN.mkv &               # the user's screen + HDMI evidence
+scripts/ps4/check.sh pN                      # plus the HDMI checks for p3/p4/p5
+```
+
+Choose the plan and variants in `/data/ps4-wine/env.txt` (`PS4WINE_MILESTONE=pN`, the toggles
+above). Give each package build its own file name. Close the running title before a reinstall
+(CE-33237-8).

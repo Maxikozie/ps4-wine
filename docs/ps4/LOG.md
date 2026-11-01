@@ -7,7 +7,7 @@ and screenshots live under `logs/` (gitignored) and are named in the line.
 ## Line format
 
 ```
-YYYY-MM-DD HH:MM | <a-h> | build <sha7>[+dirty] | PASS|PASS (framebuffer)|PASS (no shot)|FAIL|CRASH|NOLOG | <check line or first failure> | <notes; logs/<ts>-<label>.log; logs/<ts>-<label>.png>
+YYYY-MM-DD HH:MM | <a-h, sub-step, p1-p5> | build <sha7>[+dirty] | PASS|PASS (framebuffer)|PASS (no shot)|FAIL|CRASH|NOLOG | <check line or first failure> | <notes; logs/<ts>-<label>.log; logs/<ts>-<label>.png>
 ```
 
 - `build`: the short commit of the tree that produced the package (`scripts/ps4/common.sh` `build_id`), `+dirty` when uncommitted changes were in it.

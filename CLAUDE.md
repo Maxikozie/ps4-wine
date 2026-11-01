@@ -8,8 +8,9 @@ Vampire: The Masquerade – Bloodlines (GOG + Unofficial Patch). 32-bit D3D9
 games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
-rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each),
-`docs/ps4/HANDOFF-f.md` (where milestone f starts; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every
+rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each, and
+phase p between f and g), `docs/ps4/HANDOFF-p.md` (phase p, performance and
+audio, before g; plan only so far), `docs/ps4/HANDOFF-f.md` (how f was reached; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every
 console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkouts.
 
 ## Hard rules

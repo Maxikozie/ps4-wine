@@ -185,8 +185,10 @@ Is de milestone gehaald, doe dan `/clear` en start een nieuwe sessie voor de vol
 | d | Minesweeper / Notepad (GDI) | Minesweeper speelbaar met DS4 |
 | e | 64-bit D3D11-sample via DXVK 2.6.2 | Frame gepresenteerd, geen GPU-hang |
 | f | 32-bit exe via translator, daarna native WoW64-probe | Space Cadet Pinball draait |
-| g | 32-bit D3D9 Source-game (HL2) met Vulkan-batching | Stabiel speelbaar, crossings per frame gelogd |
-| h | **Bloodlines** (GOG + UP) | Nieuw spel → Santa Monica-hub, save/load, sessie van 30 min |
+| g | **Bloodlines** (GOG + UP, 32-bit D3D9) met Vulkan-batching | Gameplay bereikt, batching aan, 300 s, crossings per frame gelogd |
+| h | **Bloodlines**: sessie van 30 min | Nieuw spel → Santa Monica-hub, save/load, sessie van 30 min |
+
+Tussen f en g zit fase p (prestaties en audio, p1–p5): zie `docs/ps4/HANDOFF-p.md`.
 
 Sla er geen over: elke milestone test de basis van de volgende.
 

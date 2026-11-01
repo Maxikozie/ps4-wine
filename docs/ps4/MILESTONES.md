@@ -8,6 +8,10 @@ so, one pixel from `scripts/ps4/shot.sh`. Screenshots beyond that are
 evidence, not gates. Do not skip a milestone: each one tests what the next
 relies on. The user launches the app; everything else is scripted.
 
+Between f and g sits phase **p** (performance and audio, p1–p5, note below and
+`docs/ps4/HANDOFF-p.md`). Its steps have their own lines and rules and gate
+nothing unless a rule says so: only p2 feeds g, as g's choice of CPU.
+
 Conventions for the `PS4WINE` line: `build=<sha7>[+dirty]` always; durations
 in seconds (`session_s`), counts as integers, booleans as `0`/`1`. The line is
 emitted by the title through klog **and** netlog so either source suffices.
@@ -20,8 +24,8 @@ emitted by the title through klog **and** netlog so either source suffices.
 | d | winemine / notepad (GDI) with DS4 | User driver + present sink + VideoOut linear path + pad input; a scripted click opens winemine's board; DS4 bindings move the pointer and click | `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1` (`board_opened` = the frame changed after the scripted click at a known cell, compared by the title) **and** `fb=ok` with d4's board pixels read from the title's framebuffer readback (`check.sh d --fb`; no capture stick). Sub-steps d1–d5 have their own lines, below | Display path, input delivery, fonts in the prefix |
 | e | 64-bit D3D11 sample via DXVK 2.6.2 | `winevulkan.prx`, `libvulkan.prx`, win32u Vulkan driver on headless surfaces, display hand-over; a 64-bit D3D11 triangle (`d3d11tri64.exe`, ours: DXVK deleted its own d3d11 tests in 2022) presents through DXVK 2.6.2 | `PS4WINE e d3d11 frames>=300 gpu_hang=0 swapchain=1920x1080` **and** `shot.sh --pixel 960,540` within tolerance of the sample's triangle colour | Memory arena sizing, the 2 MiB submission cap, one-display WSI |
 | f | 32-bit EXE via translator, then native probe | `wowprospero.dll/.prx`, prefix selects it; Space Cadet Pinball plays; `wow64native` readiness probe reports caps | `PS4WINE f pinball cpu=translator frames>=600 faults_unresolved=0 native_caps=<0..7>`. PASS needs the translator fields only; `native_caps=7` is recorded as a bonus | Executable memory above 4 GiB, SEGV hook, compat-mode selectors |
-| g | 32-bit D3D9 Source game (HL2) with batching | DXVK d3d9 under WoW64, `PW_VK_BATCH=1` + `PW_VK_BATCH_STATS=1`, RADV shader cache on `/data`, keyboard/mouse input | `PS4WINE g hl2 batch=1 crossings_per_frame<=2000 fps_avg>=20 session_s>=300 faults_unresolved=0` (Slim target; a Pro should reach 30) | CPU budget on Jaguar, shader-compile stalls |
-| h | Bloodlines (GOG + Unofficial Patch) | Profile + recipe for the GOG install with UP; prefix with the game on `/data`; new game → Santa Monica hub, save and load, 30-minute session | `PS4WINE h vtmb session_s>=1800 fps_avg>=20 faults_unresolved=0 saved=1 loaded=1` **and** a save file under `/data/ps4-wine/prefix/drive_c/.../Vampire/SAVE/` newer than the session start (checked over FTP by `check.sh`). The user confirms Santa Monica by eye; the LOG line notes it | Memory peaks at hub loads, HDD hitches, non-relocatable EXE (prospero-win #737) |
+| g | Bloodlines (32-bit D3D9) with batching: gameplay reached | Profile + recipe for GOG's "Bloodlines - Unofficial Patch" (UP 11.5, standalone, extracted to `games/bloodlines-up`); prefix with the game on `/data`; `Vampire.exe -game Unofficial_Patch`; DXVK d3d9 under WoW64, `PW_VK_BATCH=1` + `PW_VK_BATCH_STATS=1`, RADV shader cache on `/data`, keyboard/mouse input; gameplay reached, batching on, 300 s | `PS4WINE g vtmb batch=1 crossings_per_frame<=2000 fps_avg>=20 session_s>=300 faults_unresolved=0` (Slim target; a Pro should reach 30) | CPU budget on Jaguar, shader-compile stalls; unmeasured: VirtualAlloc at fixed addresses, the large-address (2 GB RAM) fix, `Vampire.exe` relocated off the eboot's 0x400000 |
+| h | Bloodlines: 30-minute session with save and load | On g's profile and prefix: new game → Santa Monica hub, save and load, 30-minute session | `PS4WINE h vtmb session_s>=1800 fps_avg>=20 faults_unresolved=0 saved=1 loaded=1` **and** a save file under `/data/ps4-wine/prefix/drive_c/.../Vampire/SAVE/` newer than the session start (checked over FTP by `check.sh`). The user confirms Santa Monica by eye; the LOG line notes it | Memory peaks at hub loads, HDD hitches |
 
 ## Per-milestone notes
 
@@ -119,18 +123,53 @@ e1 passed 2026-10-30 17:29 (second launch); e2 and e3 passed 2026-10-30 18:00/18
 **f.** Pinball is prospero-win's case study (`docs/CASE_STUDY_PINBALL.md`).
 Translator first; `native_caps` comes from a readiness probe that performs the
 frame self-check and one guarded far jump, and refuses (caps 0) on any
-mismatch.
+mismatch. **Passed 2026-11-01 16:52** on the translator (54 presents/s, no
+sound, `native_caps=-`). The readiness probe (f4) moved to p2, audio to p5.
 
-**g.** HL2 is the same engine family and the same input model as Bloodlines.
-`PW_VK_BATCH_STATS=1` gives `crossings_per_frame`; `fps_avg` comes from
-DXVK's HUD counter mirrored into the `alive` record. Keep the RADV cache on
-`/data` between runs.
+**p.** Performance and audio, before g; details, line formats and the
+threshold table in `docs/ps4/HANDOFF-p.md`. The benchmark is Space Cadet
+Pinball in plan f with the pad bindings off: after a 20 s warm-up from
+Pinball's first present, a fixed 60 s segment in attract mode with no input,
+the same W and N every run, so runs compare like with like. Hand play after
+the segment is recorded separately and never compared. fps is not a CPU
+metric here (presents are vsync-locked, 54/s under a 60 Hz ceiling, and the
+GDI driver presents only on change), so p compares per-flush times. p1's
+instrumentation stays in every later build, so each step is re-measured on
+the same segment. Each step gets its own `PS4WINE pN` line, a `check.sh` rule
+and `tests/check_pN_test.sh` fixtures before its first run, and one LOG line
+per launch. Thresholds T3, G and D are written into HANDOFF-p from measured
+numbers before the step's first run and never moved after seeing its data.
 
-**h.** GOG build + UP 11.x (basic patch). Profile: `prefix = vtmb`,
-`[display] desktop = 1920x1080`, `dll_overrides = d3d9=n`, `[input] preset =
-kbm` (USB keyboard and mouse), `[runtime] cpu = translator` until f reports
-`native_caps=7`. The 30-minute session is played by the user; `check.sh h`
-reads the session log and the save file over FTP.
+| Step | What | Rule (`check.sh pN`) |
+|---|---|---|
+| p1 | Measure: per-flush histograms (min/avg/p95/max, integer µs) of guest time, copy (swizzle+scale), keep (the `last_drawn` copy) and flip wait; flushes per second and dirty area per flush. 3 launches of one package (run-to-run spread). No performance threshold | `PS4WINE p1 bench pinball cpu=translator seg_s=60 inputs=0 presents>=600 faults_unresolved=0` with every histogram field present |
+| p2 | Native WoW64: f4's readiness probe (Orbis variant of 0883 as its own patch; first, `sigaltstack` via syscall 53 through libkernel's stub); with `native_caps=7`, the segment on `cpu=native`. Correctness only: guest time recorded, not gated | `PS4WINE p2 native native_caps=7 cpu=native seg_s=60 inputs=0 faults_unresolved=0 segment=done` |
+| p3 | Drop the CPU copy: 960x540 A8R8G8B8_SRGB VideoOut buffers (no swizzle, no scale), if VideoOut scales them to 1080p (unmeasured); a 960x540 test pattern over HDMI first. GPU (RADV) only if it cannot | `PS4WINE p3 vo540 vo_register=ok vo_flip=ok seg_s=60 inputs=0 faults_unresolved=0 copy_us_avg<=T3` and HDMI 960,540 = 0,255,0, 240,135 = 255,128,0 |
+| p4 | Non-blocking present: 3 buffers, submit the flip and return, wait only for a flip slot | `PS4WINE p4 async buffers=3 seg_s=60 inputs=0 faults_unresolved=0 shown_hz>=59 flip_errors=0` and p3's HDMI pattern check |
+| p5 | Orbis audio on sceAudioOut (`pw_audio_orbis.c`, `wineorbis`, patch 0120's default), gated on Pinball's WAV effects in a scripted tail after the segment; MIDI music not tested | `PS4WINE p5 audio driver=orbis open=ok seg_s=60 inputs=0 faults_unresolved=0 grains_nonzero>=G underruns=0`, a rate gate (p4 passed: `shown_hz>=59`; p4 failed: `flush_hz` against the package's audio-off launch) and a non-silent HDMI audio track (peak >= D dBFS) in the `view.sh --record` recording |
+
+**g.** Bloodlines from GOG's standalone "Bloodlines - Unofficial Patch"
+(UP 11.5), extracted with innoextract to `games/bloodlines-up`
+(`HANDOFF-f.md`, "Games on the host"), started as GOG's play task does:
+`Vampire.exe -game Unofficial_Patch`. `Loader.exe` cannot run (it starts the
+game by CreateProcess). Profile: `prefix = vtmb`, `[display] desktop =
+1920x1080`, `dll_overrides = d3d9=n`, `[input] preset = kbm` (USB keyboard
+and mouse), `[runtime] cpu = native` if p2 passed (its rule is correctness
+only), else `translator`. "Gameplay reached": new game, character creation,
+then the player in control in the first playable map, confirmed by the user by
+eye and an HDMI frame. `PW_VK_BATCH_STATS=1` gives `crossings_per_frame`;
+`fps_avg` comes from DXVK's HUD counter mirrored into the `alive` record. Keep
+the RADV cache on `/data` between runs. Unmeasured risks, all for g's first
+launches: what the game maps at fixed addresses at run time (VirtualAlloc with
+a base); the large-address use of the 2 GB RAM fix; `Vampire.exe` wants
+0x400000, inside the eboot's 0x400000-0x650000, and is relocatable (2052 bytes
+of relocations, `HANDOFF-f.md` "PE images"), so Wine moves it as it moved
+wow32.exe in f1, but whether anything (the UP loader's plugins included)
+assumes the 0x400000 base is not known.
+
+**h.** On g's profile and prefix. The 30-minute session (new game → Santa
+Monica hub, save and load) is played by the user; `check.sh h` reads the
+session log and the save file over FTP.
 
 ## Polish (not gating)
 
