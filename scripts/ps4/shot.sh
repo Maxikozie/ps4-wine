@@ -29,6 +29,10 @@ USAGE
 # and the milestone gates name pixels of a 1920x1080 frame.
 CAPTURE_FORMAT=mjpeg
 CAPTURE_SIZE=1920x1080
+CAPTURE_RATE=60
+# The MS2109 stick (345f:2109) sends black for ~105 frames (1.7 s) after the stream opens
+# (measured 2026-11-01): keep the frame after 2.5 s.
+CAPTURE_SKIP=150
 
 OUT=""; DEV="$PS4_CAPTURE_DEV"; IN=""; PIXEL=""; EXPECT=""; TOL=40; LABEL=shot; LIST=0
 while [ $# -gt 0 ]; do
@@ -75,9 +79,10 @@ if [ -z "$IN" ]; then
     [ -e "$DEV" ] || { log "capture device $DEV does not exist"; exit 3; }
     mkdir -p "$LOGS_DIR"
     OUT="${OUT:-$LOGS_DIR/$(timestamp)-$LABEL.png}"
-    # Skip the first frames: capture sticks return garbage until their pipeline settles.
-    if ! ffmpeg -loglevel error -y -f v4l2 -input_format "$CAPTURE_FORMAT" -video_size "$CAPTURE_SIZE" -i "$DEV" \
-            -vf "select=gte(n\,8)" -frames:v 1 -update 1 "$OUT"; then
+    # Skip the first frames: capture sticks return garbage or black until their pipeline settles.
+    if ! ffmpeg -loglevel error -y -f v4l2 -input_format "$CAPTURE_FORMAT" -video_size "$CAPTURE_SIZE" \
+            -framerate "$CAPTURE_RATE" -i "$DEV" \
+            -vf "select=gte(n\,$CAPTURE_SKIP)" -frames:v 1 -update 1 "$OUT"; then
         log "capture from $DEV ($CAPTURE_FORMAT $CAPTURE_SIZE) failed; v4l2-ctl -d $DEV --list-formats-ext lists what it offers"; exit 4
     fi
     SIZE="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$OUT" 2>/dev/null || echo '?x?')"

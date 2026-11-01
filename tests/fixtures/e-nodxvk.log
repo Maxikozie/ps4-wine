@@ -1,0 +1,4 @@
+# synthetic fixture, written before the first e launch (format of logs.sh: HH:MM:SS N|K text)
+19:00:01 N PW_MS start plan=e exe=C:\d3d11tri64.exe stages=0/2 stopped=- launches=1 resumed=- file=/data/ps4-wine/e/progress.txt
+19:00:01 N PW_MS stage=display display=ok
+19:00:20 K PS4WINE e d3d11 frames=0 gpu_hang=0 swapchain=0x0 fb=none px_c=ffffff px_m=0000ff hr=0x887a0004 at=D3D11CreateDeviceAndSwapChain app_frames=0 ms_avg=16.7 level=b000 release=ok device_lost=0 gdi_dropped=1 vk_stats=ok display=ok exit=1 build=abc1234+dirty stages=2/2 stopped=- launches=1 resumed=- session_s=19

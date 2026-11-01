@@ -28,6 +28,8 @@ Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 2
              e1 960,540 = 0,255,255 (the title's Vulkan clear) and 240,135 = 255,128,0 (its marker square),
                 from RADV's own readback of the scan-out (ORBIS_WSI_SHOT, patches/mesa-ps4/0002; use --fb).
              e3 960,540 = 255,0,0 (vk64.exe's clear) and 240,135 = 0,255,0 (its square), the same readback.
+             e  960,540 = CHECK_E_RGB (default 255,255,0: d3d11tri64.exe's triangle) and 240,135 = 0,0,255
+                (its clear), the same readback.
 Sub-steps of d (docs/ps4/HANDOFF-d.md): d1 binding + VideoOut + pad + hello.exe; d2 win32u + GDI
 and d3 fonts, both from one gdi64.exe launch (check each with the same --log); d4 winemine with a
 scripted click; d5 is milestone d's own rule (check.sh d: the DS4 play after d4's click).
@@ -72,7 +74,7 @@ if [ -z "$LINE" ]; then
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
-    if [[ "$MS" == d[123] || "$MS" == e[123] ]]; then
+    if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -125,7 +127,10 @@ case "$MS" in
         # inside at 74,150, opened (0,0,0; closed it is 0,128,0).
         HAS_PIXEL=1; PIXELS=("640,298=255,255,0" "634,390=0,0,0") ;;
     e) word d3d11; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
-       HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-}"); [ -n "${CHECK_E_RGB:-}" ] || { [ "$NOSHOT" = 1 ] || { log "set CHECK_E_RGB=R,G,B to the sample's triangle colour (decided when the sample is chosen in milestone e)"; exit 2; }; } ;;
+       # d3d11tri64.exe (the fork's tests/wine_d3d11tri64.c): its yellow triangle over the centre and the blue
+       # clear at 240,135, fixed from the host reference run (DXVK 2.6.2 on lavapipe through the PS4 user
+       # driver's headless surface: px_c=ffff00 px_m=0000ff) before the first console run.
+       HAS_PIXEL=1; PIXELS=("960,540=${CHECK_E_RGB:-255,255,0}" "240,135=0,0,255") ;;
     e1) word vk; req vk_load eq ok; all vk_bound; req inst eq ok; req api eq 1.3; req maintenance5 eq 1; req robustness2 eq 1
         req gpl eq 1; req dyn_rendering eq 1; req xfb eq 1; req release eq ok; req present eq ok; req frames ge 300
         req gpu_hang eq 0; req swapchain eq 1920x1080; req fb eq ok; req hello eq ok

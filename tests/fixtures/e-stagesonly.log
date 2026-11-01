@@ -1,0 +1,3 @@
+# synthetic fixture, written before the first e launch (format of logs.sh: HH:MM:SS N|K text)
+19:00:01 N PW_MS start plan=e exe=C:\d3d11tri64.exe stages=0/2 stopped=- launches=1 resumed=- file=/data/ps4-wine/e/progress.txt
+19:00:01 N PW_MS stage=display display=ok

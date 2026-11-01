@@ -19,7 +19,10 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              drive_c/hello.exe, then the extras
   --upload   mirror build/prefix to \$PS4_HOST:$PS4_DATA_ROOT/prefix with lftp, verify sizes
   --extras   into the existing build/prefix: tests/wine_gdi64.c -> drive_c/gdi64.exe (milestone
-             d2/d3), tests/wine_vk64.c -> drive_c/vk64.exe (e2/e3), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
+             d2/d3), tests/wine_vk64.c -> drive_c/vk64.exe (e2/e3), tests/wine_d3d11tri64.c ->
+             drive_c/d3d11tri64.exe and DXVK 2.6.2's x64 d3d11.dll and dxgi.dll ->
+             drive_c/windows/system32 (milestone e; the release pinned in the fork's
+             tools/pw_install.py, downloaded to build/downloads and checked), Wine's fonts (third_party/prospero-win/.deps/wine-orbis/prx/fonts, from
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
              win32u finds fonts only there), the MenuHeight check; then put just those files
              (no mirror of the whole prefix)
@@ -45,8 +48,36 @@ WINE="$PROSPERO_WIN_DIR/.deps/wine-host/install/usr/bin/wine"
 HELLO_SRC="$PROSPERO_WIN_DIR/tests/wine_hello64.c"
 GDI_SRC="$PROSPERO_WIN_DIR/tests/wine_gdi64.c"
 VK64_SRC="$PROSPERO_WIN_DIR/tests/wine_vk64.c"
+D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
+DXVK_VERSION=2.6.2
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
-EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe)
+EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
+    drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll)
+
+# DXVK's 64-bit d3d11.dll and dxgi.dll into system32, from the release the fork pins (one pin:
+# tools/pw_install.py DXVK_RELEASES), checked by SHA-256. Native only where WINEDLLOVERRIDES says
+# so (the title's plan e sets d3d11,dxgi=n); other programs keep Wine's builtin d3d11.
+add_dxvk() {
+    local pin url sha archive
+    pin="$(python3 -I - "$PROSPERO_WIN_DIR/tools/pw_install.py" "$DXVK_VERSION" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "DXVK_RELEASES" for t in node.targets):
+        url, sha = ast.literal_eval(node.value)[sys.argv[2]]
+        print(url, sha)
+PY
+)"
+    url="${pin% *}"; sha="${pin#* }"
+    [ -n "$url" ] && [ ${#sha} = 64 ] || die "no DXVK $DXVK_VERSION pin in the fork's tools/pw_install.py"
+    archive="$BUILD_DIR/downloads/dxvk-$DXVK_VERSION.tar.gz"
+    mkdir -p "$BUILD_DIR/downloads"
+    [ -f "$archive" ] || { log "downloading $url"; curl -sSfL -o "$archive.part" "$url" && mv "$archive.part" "$archive"; } ||
+        die "cannot download $url"
+    [ "$(sha256sum "$archive" | cut -d' ' -f1)" = "$sha" ] || die "$archive does not match DXVK $DXVK_VERSION's pinned SHA-256"
+    tar -xzf "$archive" -C "$PREFIX/drive_c/windows/system32" --strip-components=2 \
+        "dxvk-$DXVK_VERSION/x64/d3d11.dll" "dxvk-$DXVK_VERSION/x64/dxgi.dll"
+}
 
 # The test programs, the fonts and the registry check; fills EXTRA_FILES.
 add_extras() {
@@ -56,6 +87,9 @@ add_extras() {
     [ -f "$MESA_SRC_DIR/include/vulkan/vulkan.h" ] || die "no Vulkan headers at $MESA_SRC_DIR/include: scripts/ps4/build.sh mesa"
     x86_64-w64-mingw32-gcc -O1 -Wall -Wextra -Werror -idirafter "$MESA_SRC_DIR/include" -o "$PREFIX/drive_c/vk64.exe" \
         "$VK64_SRC" -luser32
+    x86_64-w64-mingw32-gcc -O1 -Wall -Wextra -Werror -o "$PREFIX/drive_c/d3d11tri64.exe" "$D3D11_SRC" \
+        -ld3d11 -ldxgi -ld3dcompiler_47 -luser32
+    add_dxvk
     ls "$FONTS_SRC"/*.ttf >/dev/null 2>&1 || die "no fonts at $FONTS_SRC: scripts/ps4/build.sh wine"
     mkdir -p "$PREFIX/drive_c/windows/Fonts"
     cp "$FONTS_SRC"/*.ttf "$PREFIX/drive_c/windows/Fonts/"
@@ -67,7 +101,7 @@ add_extras() {
     if [ -n "$menu" ] && { [ "$menu" -lt 0 ] || [ "$menu" -gt 64 ]; }; then
         die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
     fi
-    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+    log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
 }
 
 # put FILES... (relative to the prefix) and verify their sizes.

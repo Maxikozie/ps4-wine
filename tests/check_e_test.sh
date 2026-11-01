@@ -14,7 +14,9 @@ e1 frame (a stale readback), an import slot not bound, a GPU hang, no device, st
 (NOLOG naming the stages). Then e2 and e3 on tests/fixtures/e2-*.log (one vk64.exe launch gives
 both lines) with generated dumps of vk64.exe's frame (red, a green square on 240,135): a pass, no
 surface (e2 passes, e3 fails), an extension DXVK needs hidden, a winevulkan slot not bound, stage
-records only. The FTP fetch is not tested here.
+records only. Then e (milestone e's own rule) on tests/fixtures/e-*.log with generated dumps of
+d3d11tri64.exe's frame (a yellow triangle over the centre, blue elsewhere): a pass, a lost device,
+Wine's own d3d11 refusing (no DXVK), stage records only. The FTP fetch is not tested here.
 Exit 0 when every case matches.
 USAGE
 }
@@ -39,6 +41,8 @@ frame "$TMP/e1-bgra.png" bgra 0x00ffff 0xff8000 0x00ffff
 frame "$TMP/d1-pattern.png" rgba black 0xff8000 0x00ff00
 frame "$TMP/e3-rgba.png" rgba 0xff0000 0x00ff00 0xff0000
 frame "$TMP/e3-bgra.png" bgra 0xff0000 0x00ff00 0xff0000
+frame "$TMP/e-rgba.png" rgba 0x0000ff 0x0000ff 0xffff00
+frame "$TMP/e-bgra.png" bgra 0x0000ff 0x0000ff 0xffff00
 
 # case <milestone> <fixture> <expected exit> <expected verdict> <substring of the line or ""> [check.sh options...]
 case_() {
@@ -71,6 +75,13 @@ case_ e2 e2-hiddenext.log   1 FAIL  "exts_dxvk=VK_EXT_transform_feedback != ok"
 case_ e2 e2-unbound.log     1 FAIL  "wv_bound=14/15 not all"
 case_ e2 e2-stagesonly.log  1 NOLOG "stage records: w32u_bind,wv_bind,display"
 case_ e3 e2-stagesonly.log  1 NOLOG "stage records: w32u_bind,wv_bind,display" --no-shot
+case_ e  e-pass.log          0 "PASS (framebuffer)" "px_c=ffff00" --fb --shot "$TMP/e-rgba.png"
+case_ e  e-pass.log          1 FAIL  "pixel 960,540: rgb=0," --fb --shot "$TMP/e-bgra.png"
+case_ e  e-pass.log          1 FAIL  "pixel 960,540: rgb=2" --fb --shot "$TMP/e3-rgba.png"   # e3's frame is not e's
+case_ e  e-pass.log          0 "PASS (no shot)" "" --no-shot
+case_ e  e-hang.log          1 FAIL  "gpu_hang=1 != 0" --no-shot
+case_ e  e-nodxvk.log        1 FAIL  "frames=0 < 300" --no-shot
+case_ e  e-stagesonly.log    1 NOLOG "stage records: display" --no-shot
 
 if [ "$fails" -ne 0 ]; then echo "check_e_test: $fails failure(s)"; exit 1; fi
 echo "check_e_test: all passed"

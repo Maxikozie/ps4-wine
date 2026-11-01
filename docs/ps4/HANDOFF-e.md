@@ -4,6 +4,61 @@ Written 2026-10-30 16:15, at the end of the session that did milestone d. Read `
 this, then `MILESTONES.md` (the e row and its note), `HANDOFF-d.md` (how d was reached; every fact
 below has its run there) and `LOG.md` (one line per console launch; d's are from 14:45 on).
 
+## Resume here (2026-11-01 14:50, e4 passed: milestone e is done)
+
+**Milestone e passed 2026-11-01 14:48**, on the second e4 launch (patch 0480 on `/data`, the same
+installed `ps4-wine-c47893b+dirty-e.pkg`):
+```
+PS4WINE e d3d11 frames=600 gpu_hang=0 swapchain=1920x1080 fb=ok px_c=ffff00 px_m=0000ff ... ms_avg=19.0 level=b000 exit=0
+```
+- DXVK 2.6.2's native d3d11/dxgi drew `d3d11tri64.exe`'s yellow triangle on blue through
+  winevulkan, win32u's headless surface and RADV's zero-copy scan-out: 600 presents, ~53 fps,
+  feature level 11_0, no hang.
+- **First check over real HDMI.** The whole launch was recorded from the capture stick
+  (`logs/20261101-144525-e-hdmi.mkv`) and the frame at t=133 s passed `check.sh e --shot`
+  (960,540 = 255,255,16, 240,135 = 2,0,247). `check.sh e --fb` passed as well. The triangle is on
+  HDMI for ~10.7 s; the stick reads 7,7,7 before and after.
+- The recipe for short-lived pictures: start `ffmpeg ... -c copy X.mkv` (optionally `-f tee` into
+  `ffplay` so the user still sees the console) together with `logs.sh`, stop it with SIGINT after
+  the line, then take frames with `ffmpeg -ss T -i X.mkv -frames:v 1 F.png`. The log's "scan-out up"
+  time minus the recording's start time gives T.
+
+**Next:** the user commits (repo + fork). Then milestone f (32-bit EXE via the translator);
+it needs its own hand-off. Open items carried from e:
+- the fork's full `make test` and `build.sh probe-test` have not been rerun since the e4 changes;
+- 0480 lives only in the hand-built `opengl32.dll` until the next `build.sh wine` (see below);
+- `err:wgl:internal_context_create` from wined3d (harmless here: d3dcompiler_47 pulls wined3d in,
+  nothing draws with GL).
+
+**Uncommitted (the user committed e1 and e2+e3; everything below is e4):**
+- **Repo:** `scripts/ps4/{check,prefix}.sh` (the e rule's colours; `--extras` builds
+  `d3d11tri64.exe` and installs DXVK from the fork's pin), `tests/check_e_test.sh` and
+  `tests/fixtures/e-*.log`, LOG.md, MILESTONES.md, this file; from 2026-11-01: `scripts/ps4/shot.sh` (60 fps, frame 150 for the stick's warm-up), the new `scripts/ps4/view.sh`, CLAUDE.md (Screen row, `view.sh`).
+- **Fork:**
+  - `tests/wine_d3d11tri64.c` and `tests/test_wine_d3d11tri64.py`;
+  - plan `e` in `native/orbis/pw_milestone_orbis.{c,h}`;
+  - `tools/test_wine_ps5_driver.sh` keeps a caller's `WINEDLLOVERRIDES`;
+  - `wine/patches/0480-opengl32-stay-loaded-without-unixlib.patch`;
+  - the Makefile.
+
+**Not rerun after the e4 changes:** the fork's full `make test` (its last full run was during e2)
+and `build.sh probe-test`. `tests/check_e_test.sh` passes, and `test_wine_d3d11tri64.py` passes with
+`PW_DXVK_ARCHIVE=build/downloads/dxvk-2.6.2.tar.gz`.
+
+**Built by hand, not by the build scripts:**
+- `opengl32.dll` was rebuilt incrementally in `.deps/wine-host/build`, stripped, and copied into
+  the host install, `build/runtime` and `build/prefix`.
+- The next `build.sh wine` sees the new patch in the series and reconfigures and rebuilds both
+  Wine trees. That is expected and puts 0480 into them properly.
+- `.deps/wine-host-drv/build` must then be refreshed again as described under e2+e3: rsync from
+  `.deps/wine-host/build`, rebuild win32u with `-DWINE_PS5_USER_DRIVER -DWINE_PS5_HEADLESS_SURFACE`,
+  and run `wineboot -u` on its prefix with the plain build-tree wine.
+
+**Known, not blocking:**
+- With a Vulkan header set, the existing `tests/test_vk_radv_profile.py` fails compiling the PS5
+  `wine/ps5/pw_vulkan_radv.c` (`clock_gettime` under `-std=c11`). It is latent: the test skipped
+  while no header was found, and nothing of e changed it.
+
 ## Where things stand
 
 **Milestone d passed 2026-10-30 16:10**, after d1–d4 (`HANDOFF-d.md`):
@@ -342,6 +397,29 @@ Rules (fixed before the first run; `tests/check_e_test.sh`):
   bound.
 - **e3:** `release=ok surface=ok present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 fb=ok`, and
   `--fb` 960,540 = 255,0,0 and 240,135 = 0,255,0.
+
+### e4: milestone e (in progress)
+
+- **`d3d11tri64.exe`** (fork `tests/wine_d3d11tri64.c`): a 1920×1080 `WS_POPUP` window,
+  `D3D11CreateDeviceAndSwapChain` (R8G8B8A8_UNORM, 2 buffers, `FLIP_DISCARD`, `Present(1,0)`),
+  `D3DCompile`d vs_4_0/ps_4_0, a yellow triangle from `SV_VertexID` over a blue clear, a staging
+  readback at frame 300 and 600 frames. Its line:
+  `D3D11 frames= swapchain= level= hr= at= px_c= px_m= ms_avg=`.
+- **Host reference** (DXVK 2.6.2 on lavapipe through the user-driver Wine and 0461's headless
+  surface): `D3D11 frames=600 swapchain=1920x1080 level=b000 hr=0x0 at=- px_c=ffff00 px_m=0000ff`.
+  So the e rule's pixels are 960,540 = 255,255,0 (`CHECK_E_RGB` default) and 240,135 = 0,0,255,
+  fixed before the first console run. The second pixel is ours, as in b/d1/e1/e3.
+- **Plan `e`:** stages `display`, then `d3d11` (the program). The plan adds
+  `WINEDLLOVERRIDES=d3d11,dxgi=n` to e2's RADV environment. Line:
+  `PS4WINE e d3d11 frames= gpu_hang= swapchain= fb= px_c= px_m= hr= at= app_frames= ms_avg= level= release= device_lost= gdi_dropped= vk_stats= display= exit=`.
+  `frames`, `swapchain` and `device_lost` come from libvulkan's counters. `gpu_hang` is a lost
+  device, or `hr` 0x887a0005/6/7.
+- **Patches checked for DXVK:** 0903 (FS base) is for 32-bit guests only, so not needed for e;
+  it matters in f/g. 0730, 0910 and 0965 apply on Orbis.
+- **Launch 1 (18:33, FAIL):** the overrides worked, but Wine's builtin `d3dcompiler_47` imports
+  wined3d, which imports opengl32. Its `DllMain` failed without a unix library (Orbis has no
+  OpenGL), so the process died before `main`. Patch **0480**: opengl32 stays loaded when its unix
+  library cannot be loaded. On the console, not launched yet.
 
 ## Open items carried from d (not blocking e)
 

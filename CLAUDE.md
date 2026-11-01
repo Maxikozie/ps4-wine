@@ -49,7 +49,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | Console paths | packages `/data/pkg/`, our data `/data/ps4-wine/{prefix,profiles,logs,cache}`, installed app `/user/app/<TITLE_ID>/` |
 | Title | `PSWN00001`, content `IV0000-PSWN00001_00-PS4WINE000000000` |
 | Host | Kubuntu (Ubuntu 26.04), x86_64. Toolchain at `$OO_PS4_TOOLCHAIN` (default `~/.local/opt/openorbis`); `common.sh` puts `/usr/lib/llvm-18/bin` first in PATH and sets `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` (PkgTool.Core cannot load ICU 78) |
-| Screen | USB HDMI capture stick, `scripts/ps4/shot.sh` (auto-detects; the laptop webcam is excluded; override with `PS4_CAPTURE_DEV`) |
+| Screen | USB HDMI capture stick: MacroSilicon MS2109 (USB `345f:2109`) at `/dev/video2` (the laptop webcam is `/dev/video0` and excluded; override with `PS4_CAPTURE_DEV`), MJPEG 1920x1080 up to 60 fps; PS4 at 1080p, HDCP off. No passthrough: the TV stays dark and the laptop is the user's only PS4 screen (`view.sh`). Only one program can read it at a time: close the viewer (its `pgrep -x` PID, never `pkill -f`) before `shot.sh` or any capture. After a stream opens it sends black (7,7,7) for ~1.7 s (~105 frames), so `shot.sh` keeps frame 150 (~3.3 s a shot); an all-7,7,7 frame means no picture or no signal, not a black screen. Short-lived pictures (e: ~10 s): record the launch (`ffmpeg -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 60 -i /dev/video2 -c copy X.mkv`, ~15 MB/s) and pull a frame; first used for e, 2026-11-01 |
 
 ## Scripts (`scripts/ps4/`)
 
@@ -61,6 +61,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | `deploy.sh FILE` | `.pkg` over FTP to `/data/pkg` (optionally remote-install); `.elf` to BinLoader |
 | `logs.sh` | klog (3232) + netlog (18194) merged into `logs/<ts>-<label>.log`; `--expect REGEX --timeout S` gates |
 | `shot.sh` | one frame from the capture stick (pinned MJPEG 1920x1080); `--pixel X,Y`, `--expect-rgb` |
+| `view.sh` | live view for the user (the "PS4 Capture" menu entry): mpv shows the stick, `pw-loopback` sends its sound to the speakers; holds the stick while open (`--no-audio`, `--sink`, `--device`) |
 | `fbshot.sh` | fetch a title's framebuffer readback (`/data/ps4-wine/shot.raw`) over FTP → PNG; framebuffer, not HDMI |
 | `check.sh <a-h>` | the milestone's single pass/fail rule; prints the LOG.md line; `--no-shot` / `--fb` for the pixel rules |
 | `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
