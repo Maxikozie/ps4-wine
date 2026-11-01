@@ -4,7 +4,47 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 18:40: p1, p3, p4 done; p2 next)
+## Resume here (2026-11-01 19:17: p1-p4 done; p5 next)
+
+**p2 passed** (LOG.md 19:17): Space Cadet Pinball's 32-bit code ran natively on the PS4 for the whole
+segment: `native_caps=7 cpu=native faults_unresolved=0`, 3597 presents in 60 s. Three launches:
+
+| Launch | Result |
+|---|---|
+| 18:56 | FAIL by design: the title's `native_probe` stage measured everything 0883 needs (`probe_caps=7`); no Orbis provider yet |
+| 19:13 | FAIL on the title's `cpu` field only (`nosym`: it asked the translator, not loaded through Wine, before looking for wow64native); the run itself was native, caps 7 |
+| 19:17 | **PASS**, the cpu field fixed |
+
+Guest time per present on the native CPU: 0.168 ms average (CPU 0.175 ms) against 0.21-0.22 ms on
+the translator (p1): recorded, not gated, as the plan says.
+
+**Built for p2 (uncommitted; the user commits):**
+- Fork:
+  - `wine/patches/1090-ntdll-orbis-native-wow64-signal-entry.patch`: 0883's and 0903's 13 PS5-only
+    gates widened to `__ORBIS__`; libkernel found as the module whose code holds getppid's stub (the
+    PS5's handle 0x2001 is not assumed); the caps stay 0 unless the main thread's alternate stack is
+    in place with its TEB at the 64 KiB-aligned base (`PW_NATIVE_ALTSTACK`); the provider line
+    logged once on the err channel (`PW_NATIVE_PROVIDER`).
+  - `wine/wow64native/unix.c`: its PS5 gates take `__ORBIS__`; `tools/build_wine_orbis.sh` builds
+    `wow64native.prx` (emulated TLS, ntdll its import source) and exports
+    `__wine_prospero_native_wow64_caps` from `ntdll.prx`.
+  - the title: plan `p2` (stages `wow_bind`, `display`, `native_probe`, `pinball`), the probe stage,
+    `WINE_PS5_WOW64_CPU=wow64native.dll` in p2's environment, `native_caps` and `cpu=native` in
+    the p lines.
+- Repo: `build.sh wine` builds `wow64native.dll` (`tools/build_wow64native.sh` into
+  `.deps/wow64native`); `runtime.sh` and `prefix.sh` stage it (runtime x86_64-windows, prefix
+  system32); `check.sh p2`, `tests/check_p2_test.sh` + 7 fixtures; CLAUDE.md's sigaltstack trap.
+- Host tests: fork `make test` exit 0 (after the user freed `/tmp`: 14 GB of milestone f's host
+  runs had filled the tmpfs); `build.sh probe-test` exit 0.
+
+**Not tested on the native CPU:** guest faults through the native entries (SEH, access
+violations, illegal instructions), several guest threads doing real work, thread suspension, a long
+run, hand play. For g: Bloodlines' profile can name the native CPU (MILESTONES g note); the
+translator stays the fallback (0614).
+
+**Next:** the user commits; then p5 (audio on sceAudioOut).
+
+## Earlier: p1, p3, p4 (2026-11-01 18:40)
 
 **p3 passed on `vo720`** (LOG.md 18:31) and **p4 passed** (18:40), both checked over HDMI on the
 recording of the launch. Five launches of the p3/p4 package in all (LOG.md 18:21-18:40):
@@ -47,7 +87,16 @@ What p3 and p4 say:
 memory and writes it twice; the guest CPU read happens before the async slot wait (the p4 line's
 `guest_cpu_us_avg=465` counted the wait's polling; guest wall time was 0.22 ms).
 
-**Next:** the user commits; then p2 (native WoW64): first the `sigaltstack`-via-syscall-53 stage.
+**p2's probe (2026-11-01 18:56, LOG.md): `probe_caps=7`.** Everything 0883 relies on works on this
+PS4: the getppid stub's shape (by bytes) and its syscall instruction; `sigaltstack` both through
+libkernel and as syscall 53; a SIGUSR2 registered with the kernel's own `sigaction` (416) and
+`SA_ONSTACK` arrives once, on the alternate stack, where 0883's 64 KiB round-down finds the marker;
+the frame holds the marked MXCSR at ucontext+320+24 and the FS base at +1152. The old "sigaltstack
+returns -1" was the SDK's musl `stack_t` (`ss_size` and `ss_flags` swapped, `SS_DISABLE` 2 instead
+of FreeBSD's 4), documented in orbis-compat's `signal.h`; the fork's `wine/orbis/include` has had
+FreeBSD's layout since c (`abee8ea`), so Wine's `init_thread_pipe` call has probably worked since
+then (its return is ignored and was never logged). Next: the Orbis variant of 0883/0903 and the
+`wow64native` backend for Orbis.
 
 ## Earlier: p1 done (2026-11-01 18:06)
 

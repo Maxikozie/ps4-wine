@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|p3|p4|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1|p2|p3|p4|g|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -46,7 +46,9 @@ is the evidence, taken with shot.sh while it runs).
 Phase p (docs/ps4/HANDOFF-p.md), between f and g: p1 measures Space Cadet Pinball's attract mode over a
 fixed 60 s segment with the pad unused (plan p1): seg_s>=60, inputs=0, presents>=600 (a sanity floor),
 no unresolved fault, and every guest/copy/keep/flip histogram field (min, avg, p95, max) a number. No
-performance threshold. p3: the same segment on A8R8G8B8_SRGB scan-out buffers (present_path=vo720 or vo1080,
+performance threshold. p2: native WoW64, correctness only: native_caps=7 (Wine's readiness export), cpu=native, the
+segment completed with no input and no unresolved fault; the title's own probe (probe_caps, altstack53, ...) and
+the guest times are recorded, not gated. p3: the same segment on A8R8G8B8_SRGB scan-out buffers (present_path=vo720 or vo1080,
 vo_register=ok, vo_flip=ok) with copy_us_avg <= 11647 (T3, written from p1 before p3 ran). p4: three buffers
 and the asynchronous flip (present_mode=async, buffers=3) with shown_hz >= 59 and flip_errors=0. p3 and p4
 also read the title's test pattern over HDMI, 960,540 = 0,255,0 and 240,135 = 255,128,0: a frame
@@ -69,7 +71,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p3|p4|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|g|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [[ "$MS" == p[34] ]]; then
     [ "$FB" = 0 ] || die "$MS: the pattern is checked over HDMI only (--shot FRAME from the recording)"
@@ -182,6 +184,8 @@ case "$MS" in
     p1) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
         req presents ge 600; req faults_unresolved eq 0
         for h in guest_us copy_us keep_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done ;;
+    p2) word bench; word pinball; req native_caps eq 7; req cpu eq native; req end eq segment; req seg_s ge 60
+        req inputs eq 0; req faults_unresolved eq 0 ;;
     p3|p4) word bench; word pinball; req cpu eq translator; req end eq segment; req seg_s ge 60; req inputs eq 0
         req presents ge 600; req faults_unresolved eq 0; req vo_register eq ok; req vo_flip eq ok
         for h in guest_us copy_us flip_us; do num "${h}_min" "${h}_avg" "${h}_p95" "${h}_max"; done

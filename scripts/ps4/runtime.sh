@@ -68,6 +68,10 @@ if [ "$PRX_ONLY" = 0 ]; then
     WOWP="$FORK/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
     [ -f "$WOWP" ] || die "no $WOWP: scripts/ps4/build.sh wine"
     command cp -f "$WOWP" "$WIN/lib/wine/x86_64-windows/"
+    # wow64native.dll (phase p2), from tools/build_wow64native.sh's output.
+    W64N="$FORK/.deps/wow64native/x86_64-windows/wow64native.dll"
+    [ -f "$W64N" ] || die "no $W64N: scripts/ps4/build.sh wine"
+    command cp -f "$W64N" "$WIN/lib/wine/x86_64-windows/"
     mkdir -p "$WIN/share/wine"
     rsync -a --delete "$HOST_WINE/share/wine/nls/" "$WIN/share/wine/nls/"
 fi
@@ -109,6 +113,6 @@ while IFS= read -r f; do
         awk -v n="$(basename "$rel")" '$NF == n { print $5 }' | head -n1 || true)"
     checked=$((checked + 1))
     if [ "$have" != "$want" ]; then log "size mismatch: $rel local $want remote ${have:-missing}"; bad=$((bad + 1)); fi
-done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' -o -name 'wowprospero.dll' \))
+done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' -o -name 'wowprospero.dll' -o -name 'wow64native.dll' \))
 log "verified $checked file sizes, $bad mismatch(es)"
 [ "$bad" = 0 ] || die "upload incomplete"

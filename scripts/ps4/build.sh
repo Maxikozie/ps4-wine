@@ -16,7 +16,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1, p3, p4)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p4)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
@@ -292,6 +292,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_e_test.sh"
     "$REPO_ROOT/tests/check_f_test.sh"
     "$REPO_ROOT/tests/check_p1_test.sh"
+    "$REPO_ROOT/tests/check_p2_test.sh"
     "$REPO_ROOT/tests/check_p3_test.sh"
     "$REPO_ROOT/tests/check_p4_test.sh"
 }
@@ -383,6 +384,12 @@ build_wine() {
             PROSPERO_WINE_SOURCE="$PROSPERO_WIN_DIR/.deps/wine-host/source" tools/build_wowprospero.sh --jobs "$jobs" \
             > "$BUILD_DIR/wowprospero-host.out" 2>&1) || die "build_wowprospero.sh failed; see $BUILD_DIR/wowprospero-host.out"
     fi
+    # wow64native.dll (phase p2): the hardware WoW64 backend's PE side, against the host tree
+    # (its Unix side is wow64native.prx, built with the Orbis PRXs below). Cheap: always rebuilt.
+    log "wine: wow64native.dll (.deps/wow64native)"
+    (cd "$PROSPERO_WIN_DIR" && PATH="/usr/lib/llvm-18/bin:$PATH" sh tools/build_wow64native.sh \
+        --source .deps/wine-host/source --build .deps/wine-host/build --output .deps/wow64native \
+        > "$BUILD_DIR/wow64native-host.out" 2>&1) || die "build_wow64native.sh failed; see $BUILD_DIR/wow64native-host.out"
     # libvulkan.prx (milestone e) from the -femulated-tls copy of RADV (build.sh mesa --prx).
     local radv="$MESA_PRX_BUILD_DIR/src/amd/vulkan/libvulkan_radeon.a"
     [ -f "$radv" ] || die "no $radv: scripts/ps4/build.sh mesa --prx (libvulkan.prx needs RADV without native TLS)"

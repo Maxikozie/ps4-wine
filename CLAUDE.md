@@ -95,7 +95,11 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   `shm_open(SHM_ANON)` works. `sceKernelStat` by path returns dev/ino 0,
   `_fstat` on a descriptor returns them. Files under `/data` are root's.
 - Default thread stack is 64 KiB (orbis-compat raises it to 2 MiB).
-  `timer_create` with SIGEV_THREAD hangs. `sigaltstack` returns -1.
+  `timer_create` with SIGEV_THREAD hangs. `sigaltstack` works (libkernel's and raw syscall 53,
+  measured in p2) with FreeBSD's `stack_t` `{ss_sp, size_t ss_size, int ss_flags}` and
+  `SS_DISABLE` 0x4; the SDK's musl header swaps `ss_size`/`ss_flags` (and has `SS_DISABLE` 2), so
+  filled through it the kernel sees `ss_flags=0x10000` and refuses (EINVAL: the old "returns -1").
+  The fork's `wine/orbis/include` has had FreeBSD's layout since c; Wine's own call was never logged.
 - Returning from `main()` or calling `exit()` (from any module) is reported as
   CE-34878-0: idle forever instead. Writes to fd 1/2 reach only klog. So the
   last launch is still running: close it (PS button, Options, Close

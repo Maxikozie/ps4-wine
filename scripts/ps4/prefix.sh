@@ -28,7 +28,7 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              build.sh wine) -> drive_c/windows/Fonts (the console lists no /app0 directory, so
              win32u finds fonts only there), with i686-w64-mingw32-gcc tests/wine_hello32.c ->
              drive_c/hello32.exe and tests/wine_wow32.c -> drive_c/wow32.exe (milestone f1/f2) and
-             the host build's wowprospero.dll -> drive_c/windows/system32, the user's Space Cadet
+             the host build's wowprospero.dll and wow64native.dll (phase p2) -> drive_c/windows/system32, the user's Space Cadet
              Pinball (games/Pinball, gitignored, when present) -> drive_c/Pinball (milestone f), the
              MenuHeight check;
              then put just those files (no mirror of the whole prefix; the CPU key is --make's)
@@ -58,12 +58,14 @@ D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
 HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
 WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
 WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
+W64N_DLL="$PROSPERO_WIN_DIR/.deps/wow64native/x86_64-windows/wow64native.dll"   # tools/build_wow64native.sh (phase p2)
 PINBALL_SRC="$REPO_ROOT/games/Pinball"   # the user's files (docs/ps4/HANDOFF-f.md "Inputs"), never tracked
 DXVK_VERSION=2.6.2
 FONTS_SRC="$PROSPERO_WIN_DIR/.deps/wine-orbis/prx/fonts"
 EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
     drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll
-    drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll)
+    drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll
+    drive_c/windows/system32/wow64native.dll)
 
 # DXVK's 64-bit d3d11.dll and dxgi.dll into system32, from the release the fork pins (one pin:
 # tools/pw_install.py DXVK_RELEASES), checked by SHA-256. Native only where WINEDLLOVERRIDES says
@@ -111,6 +113,10 @@ add_extras() {
         "$WOW32_SRC" -lgdi32 -luser32
     [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
     command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
+    # Phase p2: the hardware WoW64 backend, selected per run by WINE_PS5_WOW64_CPU (patch 0611); the
+    # prefix's CPU key keeps naming wowprospero.dll, the fallback (0614).
+    [ -f "$W64N_DLL" ] || die "no $W64N_DLL: scripts/ps4/build.sh wine"
+    command cp -f "$W64N_DLL" "$PREFIX/drive_c/windows/system32/"
     # Milestone f: Space Cadet Pinball, the user's loose XP files, as C:\Pinball.
     if [ -f "$PINBALL_SRC/PINBALL.EXE" ]; then
         mkdir -p "$PREFIX/drive_c/Pinball"
@@ -209,7 +215,7 @@ quit"
     lftp -c "$CMDS" >&2
     bad=0
     for f in system.reg user.reg userdef.reg drive_c/hello.exe drive_c/gdi64.exe drive_c/wow32.exe \
-        drive_c/windows/system32/wowprospero.dll; do
+        drive_c/windows/system32/wowprospero.dll drive_c/windows/system32/wow64native.dll; do
         want="$(stat -c %s "$PREFIX/$f")"
         have="$(curl -sS --ftp-pasv "ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/$(dirname "$f")/" 2>/dev/null |
             awk -v n="$(basename "$f")" '$NF == n { print $5 }' | head -n1 || true)"
