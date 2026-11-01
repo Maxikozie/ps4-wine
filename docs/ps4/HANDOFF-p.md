@@ -591,6 +591,8 @@ Per present (= per flush), in integer µs (a precision choice):
   `keep_us` and `flip_us`, plus `frame_us_avg` and `presents`.
 - `guest_cpu_us_avg` from `clock_gettime(CLOCK_THREAD_CPUTIME_ID)` on the presenting thread,
   `thread_cpu=ok|err:<rc>` (unmeasured on Orbis). It separates the guest's CPU time from its waits.
+  As built: `getrusage(RUSAGE_THREAD)` (`pw_milestone_orbis.c:794-805`), because orbis-compat answers
+  CPU-time clock ids with the monotonic clock ("Measurement notes" above).
 - **Flushes:** `flush_hz` (presents per second over the segment), the dirty area per flush
   (`dirty_px_avg`, `dirty_px_max`) and `full_flushes`. `pw_ms_present` receives the whole frame and
   no rectangle, so the driver tells ntdll each present's dirty area just before it (patch 1080,

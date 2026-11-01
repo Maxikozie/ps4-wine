@@ -24,8 +24,8 @@ emitted by the title through klog **and** netlog so either source suffices.
 | d | winemine / notepad (GDI) with DS4 | User driver + present sink + VideoOut linear path + pad input; a scripted click opens winemine's board; DS4 bindings move the pointer and click | `PS4WINE d winemine frames>=600 inputs>=10 refused=0 board_opened=1` (`board_opened` = the frame changed after the scripted click at a known cell, compared by the title) **and** `fb=ok` with d4's board pixels read from the title's framebuffer readback (`check.sh d --fb`; no capture stick). Sub-steps d1–d5 have their own lines, below | Display path, input delivery, fonts in the prefix |
 | e | 64-bit D3D11 sample via DXVK 2.6.2 | `winevulkan.prx`, `libvulkan.prx`, win32u Vulkan driver on headless surfaces, display hand-over; a 64-bit D3D11 triangle (`d3d11tri64.exe`, ours: DXVK deleted its own d3d11 tests in 2022) presents through DXVK 2.6.2 | `PS4WINE e d3d11 frames>=300 gpu_hang=0 swapchain=1920x1080` **and** `shot.sh --pixel 960,540` within tolerance of the sample's triangle colour | Memory arena sizing, the 2 MiB submission cap, one-display WSI |
 | f | 32-bit EXE via translator, then native probe | `wowprospero.dll/.prx`, prefix selects it; Space Cadet Pinball plays; `wow64native` readiness probe reports caps | `PS4WINE f pinball cpu=translator frames>=600 faults_unresolved=0 native_caps=<0..7>`. PASS needs the translator fields only; `native_caps=7` is recorded as a bonus | Executable memory above 4 GiB, SEGV hook, compat-mode selectors |
-| g | Bloodlines (32-bit D3D9) with batching: gameplay reached | Profile + recipe for GOG's "Bloodlines - Unofficial Patch" (UP 11.5, standalone, extracted to `games/bloodlines-up`); prefix with the game on `/data`; `Vampire.exe -game Unofficial_Patch`; DXVK d3d9 under WoW64, `PW_VK_BATCH=1` + `PW_VK_BATCH_STATS=1`, RADV shader cache on `/data`, keyboard/mouse input; gameplay reached, batching on, 300 s | `PS4WINE g vtmb batch=1 crossings_per_frame<=2000 fps_avg>=20 session_s>=300 faults_unresolved=0` (Slim target; a Pro should reach 30) | CPU budget on Jaguar, shader-compile stalls; unmeasured: VirtualAlloc at fixed addresses, the large-address (2 GB RAM) fix, `Vampire.exe` relocated off the eboot's 0x400000 |
-| h | Bloodlines: 30-minute session with save and load | On g's profile and prefix: new game → Santa Monica hub, save and load, 30-minute session | `PS4WINE h vtmb session_s>=1800 fps_avg>=20 faults_unresolved=0 saved=1 loaded=1` **and** a save file under `/data/ps4-wine/prefix/drive_c/.../Vampire/SAVE/` newer than the session start (checked over FTP by `check.sh`). The user confirms Santa Monica by eye; the LOG line notes it | Memory peaks at hub loads, HDD hitches |
+| g | Bloodlines (32-bit D3D9) with batching: gameplay reached | Profile + recipe for GOG's "Bloodlines - Unofficial Patch" (UP 11.5, standalone, extracted to `games/bloodlines-up`), uploaded to `C:\VTMB` in the one prefix on `/data`; `Vampire.exe -game Unofficial_Patch` with its working directory, from the profile; DXVK 2.6.2's x32 d3d9 under WoW64, `PW_VK_BATCH=1` + `PW_VK_BATCH_STATS=1`, RADV shader cache on `/data`, USB keyboard/mouse (DS4 preset as the fallback); gameplay reached, batching on, 300 s. Sub-steps g1n, g1m, g1, g2 (`HANDOFF-g.md`) | `PS4WINE g vtmb batch=1 gameplay=1 crossings_per_frame<=2000 fps_avg>=20 session_s>=300 faults_unresolved=0` (Slim target; a Pro should reach 30), fixed 2026-11-01 before the first g run; an HDMI frame of the first map as evidence | 32-bit Vulkan maps (mesa-ps4 refuses placed maps today), CPU budget on Jaguar, shader-compile stalls; unmeasured: VirtualAlloc at fixed addresses, the large-address (2 GB RAM) fix, `Vampire.exe` relocated off the eboot's 0x400000 |
+| h | Bloodlines: 30-minute session with save and load | On g's profile and prefix: new game → Santa Monica hub, save and load, 30-minute session | `PS4WINE h vtmb session_s>=1800 fps_avg>=20 faults_unresolved=0 saved=1 loaded=1` **and** a save file under `/data/ps4-wine/prefix/drive_c/VTMB/Unofficial_Patch/save/` newer than the session start (checked over FTP by `check.sh`). The user confirms Santa Monica by eye; the LOG line notes it | Memory peaks at hub loads, HDD hitches |
 
 ## Per-milestone notes
 
@@ -153,13 +153,24 @@ numbers before the step's first run and never moved after seeing its data.
 (UP 11.5), extracted with innoextract to `games/bloodlines-up`
 (`HANDOFF-f.md`, "Games on the host"), started as GOG's play task does:
 `Vampire.exe -game Unofficial_Patch`. `Loader.exe` cannot run (it starts the
-game by CreateProcess). Profile: `prefix = vtmb`, `[display] desktop =
-1920x1080`, `dll_overrides = d3d9=n`, `[input] preset = kbm` (USB keyboard
-and mouse), `[runtime] cpu = native` if p2 passed (its rule is correctness
-only), else `translator`. "Gameplay reached": new game, character creation,
-then the player in control in the first playable map, confirmed by the user by
-eye and an HDMI frame. `PW_VK_BATCH_STATS=1` gives `crossings_per_frame`;
-`fps_avg` comes from DXVK's HUD counter mirrored into the `alive` record. Keep
+game by CreateProcess). The game lives at `C:\VTMB` in the one prefix
+(`/data/ps4-wine/prefix`; the earlier `prefix = vtmb` has no Orbis
+equivalent). Profile `/data/ps4-wine/profiles/vtmb.ini`: the exe, its
+arguments and working directory, `[display] desktop = 1920x1080`,
+`dll_overrides = d3d9=n`, `[input] preset = kbm` (USB keyboard and mouse, new
+on Orbis; the DS4 preset `vtmb.input` is the fallback), `[runtime] cpu =
+native` if g1n passes (f1's `wow32.exe` on the native CPU), else `translator`.
+"Gameplay reached": new game, character creation, then the player in control
+in the first playable map, marked by the user (DS4 touchpad: `gameplay=1`,
+which starts the 300 s window) and confirmed by eye and an HDMI frame.
+`crossings_per_frame` is Δ`wine_unix_crossings` / Δ`present` from the
+`PW_VK_BATCH` records inside the window; `fps_avg` is RADV's present counter
+over the window (the "DXVK HUD counter mirrored into the alive record" this
+note named before does not exist). DXVK 2.6.2 applies its built-in
+`vampire.exe` profile (`deferSurfaceCreation`, `memoryTrackTest`,
+`maxAvailableMemory=1024`; `HANDOFF-g.md`). Free flexible memory, live and
+created threads, CPU time per frame of the main thread and DXVK's threads, and
+the GPU's, in a hub and an interior, are recorded, not gated. Keep
 the RADV cache on `/data` between runs. Unmeasured risks, all for g's first
 launches: what the game maps at fixed addresses at run time (VirtualAlloc with
 a base); the large-address use of the 2 GB RAM fix; `Vampire.exe` wants

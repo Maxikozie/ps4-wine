@@ -248,9 +248,10 @@ case "$MS" in
         fi
         # The test pattern full-screen: its green centre -> 960,540, its orange marker at an eighth -> 240,135.
         HAS_PIXEL=1; PIXELS=("960,540=0,255,0" "240,135=255,128,0") ;;
-    g) word vtmb; req batch eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
+    # g: fixed 2026-11-01 before the first g run (docs/ps4/HANDOFF-g.md: gameplay=1 is the user's mark).
+    g) word vtmb; req batch eq 1; req gameplay eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
-       # TODO(milestone h): list /data/ps4-wine/prefix/.../SAVE over FTP and require a save newer than the session start.
+       # TODO(milestone h): list /data/ps4-wine/prefix/drive_c/VTMB/Unofficial_Patch/save over FTP and require a save newer than the session start.
        log "h: the FTP save-file check is not implemented yet; the log fields are checked"; ;;
 esac
 

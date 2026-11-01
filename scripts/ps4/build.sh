@@ -387,20 +387,23 @@ fork_env() {
     export OO_PS4_TOOLCHAIN ORBIS_COMPAT="$ORBIS_COMPAT_STAGE" LLVM_BIN
 }
 
-# Host Wine (the fork's build_wine_runtime.sh + build_host_wine.sh, headless unless the X11 and
-# FreeType development packages are installed), then the Orbis Unix side (build_wine_orbis.sh).
+# Host Wine (the fork's build_wine_runtime.sh + build_host_wine.sh, always headless), then the
+# Orbis Unix side (build_wine_orbis.sh).
 build_wine() {
     local jobs="${JOBS:-$(nproc)}" skip_host=0 extra="" a
     for a in "$@"; do case "$a" in --jobs) ;; --skip-host) skip_host=1 ;; [0-9]*) jobs="$a" ;; *) die "build wine: unknown option $a" ;; esac; done
     fork_env
     if [ "$skip_host" = 0 ]; then
-        dpkg -s libx11-dev >/dev/null 2>&1 || extra="$extra --without-x"
-        dpkg -s libfreetype-dev >/dev/null 2>&1 || extra="$extra --without-freetype"
+        # Pinned headless, as milestones c-p6 built these trees: they supply the runtime's PE modules
+        # and .deps/wine-host-drv. The configure arguments are part of build_host_wine.sh's stamp, so
+        # deriving them from installed packages (as before milestone g) would wipe and rebuild both trees
+        # once X11 or FreeType headers appear. The desktop Wine gets its own tree (docs/ps4/HANDOFF-g.md).
+        extra=" --without-x --without-freetype"
         # Vulkan needs only the soname (Wine has its own headers): the host Wine then runs the
         # milestone e test programs (vk64.exe, DXVK) on the host's driver, lavapipe in the tests.
         if [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ]; then extra="$extra ac_cv_lib_soname_vulkan=libvulkan.so.1"
         else log "host wine: no libvulkan.so.1; the milestone e host tests will be skipped"; fi
-        [ -z "$extra" ] || log "host wine: headless build (missing packages; setup-host.sh --check-apt):$extra"
+        log "host wine: headless build (pinned):$extra"
         log "wine: host tools tree (Wine 490f6d5, .deps/wine)"
         (cd "$PROSPERO_WIN_DIR" && PROSPERO_WINE_CONFIGURE_EXTRA="${extra# }" tools/build_wine_runtime.sh --jobs "$jobs" > "$BUILD_DIR/wine-runtime.out" 2>&1) ||
             die "build_wine_runtime.sh failed; see $BUILD_DIR/wine-runtime.out"
