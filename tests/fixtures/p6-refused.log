@@ -1,0 +1,7 @@
+# synthetic fixture, written before the first p6 launch (format of logs.sh: HH:MM:SS N|K text)
+21:00:01 N PW_MS start plan=p6 exe=C:\wincb32.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/p6/progress.txt
+21:00:02 N PW_MS stage=stack_probe sp_lib_rc=0,0 sp_lib_alive1_kib=12288 sp_lib_kib1=12288 sp_lib_alive2_kib=0 sp_lib_kib2=0
+21:00:03 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+21:00:03 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2
+21:00:05 N orbis: thread caller stack REFUSED: scePthreadCreate returned 0x80020016 for stack 0x100be30000 size 1048576 (1 refusal(s)); falling back to a 512 KiB stack of its own
+21:00:40 N PS4WINE p6 stacks stack_policy=keep hold_flex_kib=4608 hold_back_kib=0 hold2_flex_kib=0 threads_kept=0 threads_small=33 threads_keep_refused=33 threads_created=37 threads_raised=4 threads_create_failed=0 stack_floor_mib=16 thread_stats=ok flex_mib_start=431 flex_mib_hold=420 flex_mib=419 threads_created_hold=24 sp_lib_rc=0,0 sp_lib_alive1_kib=12288 sp_lib_kib1=12288 sp_lib_alive2_kib=0 sp_lib_kib2=0 bits=32 cpu=translator cases=23 cases_ok=23 main_ok=9/9 new_ok=14/14 direct_main=1 direct_new=1 cbt_main=1 cbt_new=1 cross=ok hold_windows=8 hold2_windows=8 first_fail=- faults_unresolved=0 wow_bound=19/19 display=ok exit=0 build=0000000 stages=4/4 stopped=- launches=1 resumed=- session_s=40

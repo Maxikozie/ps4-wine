@@ -146,9 +146,10 @@ numbers before the step's first run and never moved after seeing its data.
 | p2 | **Passed 2026-11-01 19:17** (Pinball natively, caps 7; patch 1090, wow64native.prx). Native WoW64: f4's readiness probe (Orbis variant of 0883 as its own patch; first, `sigaltstack` via syscall 53 through libkernel's stub); with `native_caps=7`, the segment on `cpu=native`. Correctness only: guest time recorded, not gated | `PS4WINE p2 native native_caps=7 cpu=native seg_s=60 inputs=0 faults_unresolved=0 segment=done` |
 | p3 | **Passed 2026-11-01 18:31 (vo720).** Drop the CPU copy: A8R8G8B8_SRGB VideoOut buffers, no swizzle. 960x540 is refused by VideoOut (0x80290005); `vo720` (1280x720 buffers on a 1280x720 desktop, VideoOut scales to 1080p) brought the copy from 12.9 to 0.9 ms; `vo1080` (1920x1080, CPU 2x) failed on a read-back fault since fixed. A test pattern over HDMI first | `PS4WINE p3 bench pinball ... present_path=vo720\|vo1080 vo_register=ok vo_flip=ok seg_s=60 inputs=0 faults_unresolved=0 copy_us_avg<=T3` and HDMI 960,540 = 0,255,0, 240,135 = 255,128,0 |
 | p4 | **Passed 2026-11-01 18:40.** Non-blocking present: 3 buffers, submit the flip and return, wait only for a flip slot. In attract mode Pinball outruns 60/s, so every present still waits (now for a slot) | `PS4WINE p4 bench pinball ... present_mode=async buffers=3 seg_s=60 inputs=0 faults_unresolved=0 shown_hz>=59 flip_errors=0` and p3's HDMI pattern check |
-| p5 | Orbis audio on sceAudioOut (`pw_audio_orbis.c`, `wineorbis`, patch 0120's default), gated on Pinball's WAV effects in a scripted tail after the segment; MIDI music not tested | `PS4WINE p5 audio driver=orbis open=ok seg_s=60 inputs=0 faults_unresolved=0 grains_nonzero>=G underruns=0`, a rate gate (p4 passed: `shown_hz>=59`; p4 failed: `flush_hz` against the package's audio-off launch) and a non-silent HDMI audio track (peak >= D dBFS) in the `view.sh --record` recording |
+| p5 | **Passed 2026-11-01 21:17** (step p5w first, 20:56: window callbacks on new threads, patch 1100). Orbis audio on sceAudioOut (`wineps5.prx`, patch 0120's default), gated on Pinball's WAV effects in a scripted tail after the segment; MIDI music not tested | `PS4WINE p5 audio driver=orbis open=ok seg_s=60 inputs=0 faults_unresolved=0 grains_nonzero>=G underruns=0`, a rate gate (p4 passed: `shown_hz>=59`; p4 failed: `flush_hz` against the package's audio-off launch) and a non-silent HDMI audio track (peak >= D dBFS) in the `view.sh --record` recording |
+| p6 | **Passed 2026-11-01 22:06** (keep: Wine's threads on their own kernel stacks, 0 KiB of flexible memory for 8; p5 and e still pass). Thread stacks, the gate for g. ntdll.prx's pthread layer (orbis-compat) dropped the 1 MiB kernel stack Wine's `spawn_thread` sets and gave each Wine thread a 16 MiB libkernel stack (~12 MiB of flexible memory each). `patches/orbis-compat/0001`: a caller-set stack is kept (or, if libkernel refuses it, replaced by 512 KiB), `WINE_PS5_THREAD_STACK=keep\|small\|floor`. Plan p6: libkernel's own stack reuse probed, then p5w's wincb32.exe with its 8 hold threads twice (reuse or leak) | `PS4WINE p6 stacks` with p5w's rule, `threads_create_failed=0 hold_flex_kib<=8192 hold2_flex_kib<=8192` (8 threads at 1 MiB each) |
 
-**g.** Bloodlines from GOG's standalone "Bloodlines - Unofficial Patch"
+**g.** Starts after p6 (thread stacks). Bloodlines from GOG's standalone "Bloodlines - Unofficial Patch"
 (UP 11.5), extracted with innoextract to `games/bloodlines-up`
 (`HANDOFF-f.md`, "Games on the host"), started as GOG's play task does:
 `Vampire.exe -game Unofficial_Patch`. `Loader.exe` cannot run (it starts the
@@ -191,3 +192,9 @@ when the code it touches is next open, or before a build is handed to anyone els
   Applies to every title: the Wine title (from c on) owns a VideoOut port and later a Vulkan
   device too, and needs the same path (`pw_wine_release_display` is a natural place for it). **Not a
   blocker for c.**
+- **A 1:1 1920x1080 desktop for GDI programs.** Pinball's picture on the console is a 1280x720
+  desktop that VideoOut scales 1.5x to 1080p (p3's `vo720`), so its pixels are soft and the table
+  is held at 800x600 inside it. Fix `vo1080` (1920x1080 A8R8G8B8 scan-out buffers, no scaling) by
+  copying only the rows that changed, from the desktop surface. p3 dropped `vo1080` at 111.9 ms a
+  present because each row was read back from the write-combined scan-out buffer. Check: Pinball on a
+  1920x1080 desktop with `copy_us_avg` near vo720's 0.9 ms, and an HDMI frame at 1:1.

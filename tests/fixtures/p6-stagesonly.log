@@ -1,0 +1,5 @@
+# synthetic fixture, written before the first p6 launch (format of logs.sh: HH:MM:SS N|K text)
+21:00:01 N PW_MS start plan=p6 exe=C:\wincb32.exe stages=0/4 stopped=- launches=1 resumed=- file=/data/ps4-wine/p6/progress.txt
+21:00:02 N PW_MS stage=stack_probe sp_lib_rc=0,0 sp_lib_alive1_kib=12288 sp_lib_kib1=12288 sp_lib_alive2_kib=0 sp_lib_kib2=0
+21:00:03 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+21:00:03 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2

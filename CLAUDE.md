@@ -9,8 +9,8 @@ games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
 rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each, and
-phase p between f and g), `docs/ps4/HANDOFF-p.md` (phase p, performance and
-audio, before g; plan only so far), `docs/ps4/HANDOFF-f.md` (how f was reached; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every
+phase p between f and g), `docs/ps4/HANDOFF-p.md` (phase p, performance,
+audio and thread stacks, before g; p1-p6 passed), `docs/ps4/HANDOFF-f.md` (how f was reached; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every
 console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkouts.
 
 ## Hard rules
@@ -94,15 +94,24 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   fds 0-2 are EPERM; `pipe`, `socketpair` and `SCM_RIGHTS` fd passing work;
   `shm_open(SHM_ANON)` works. `sceKernelStat` by path returns dev/ino 0,
   `_fstat` on a descriptor returns them. Files under `/data` are root's.
-- Default thread stack is 64 KiB. orbis-compat's `pthread_create` raises any smaller request to
-  its floor, the main thread's stack size (`resolveFloor` → `mainThreadStack`: 16 MiB in this
-  title, `stack_floor_mib=16`), on a fresh attribute that drops a `pthread_attr_setstack` address.
-  Each such stack costs flexible memory: 8 live threads took 96 MiB (12 MiB each), and the free
-  flexible memory did not come back when they ended (p5w, 2026-11-01).
-  Wine's threads therefore ran their Unix side off their kernel stack, so `KeUserModeCallback`
-  refused every callback on all but the main thread: no window procedure, hook or WM_NCCREATE on
-  new threads, and no winmm sound. The fork's patch 1100 fixes this by putting the frame at the
-  kernel stack's top; `WINE_PS5_THREAD_FRAME=0` restores the old behaviour.
+- Default thread stack is 64 KiB. orbis-compat's `pthread_create` (one copy per module: the title,
+  ntdll.prx, libvulkan.prx ...) raises any smaller request to its floor, on a fresh attribute.
+  The floor is the stack of the first thread that creates a thread through that copy
+  (`resolveFloor` → `stackOfSelf`); it was 16 MiB in ntdll's and in libvulkan's.
+  - **Cost:** a 16 MiB libkernel stack costs 16 MiB of flexible memory and is never returned to the
+    pool. libthr hands it to a later thread of the same size once it has collected the dead ones:
+    a second set of 8 Wine threads cost 0 KiB (p6 L1, 2026-11-01).
+  - **The fix,** `patches/orbis-compat/0001` (applied by `build.sh compat`): a caller-set stack
+    (`pthread_attr_setstack`) goes through untouched. `WINE_PS5_THREAD_STACK` (env.txt) chooses:
+    `keep` (default; a refusal falls back to small), `small` (512 KiB), `floor` (the old raise).
+    Wine's threads then run on their own 1 MiB kernel stack, which is direct memory, and cost no
+    flexible memory. libkernel accepts it (p6 L2).
+  - **Reading the floor:** use `threadStackFloorPeek`. `threadStackFloor` resolves the floor from
+    the reader's own stack.
+  - **Before the fix:** a dropped stack ran a thread's Unix side off its kernel stack, so
+    `KeUserModeCallback` refused every callback on new threads. The fork's patch 1100 still moves
+    the frame of any thread found off its kernel stack; `WINE_PS5_THREAD_FRAME=0` restores the old
+    placement.
   `timer_create` with SIGEV_THREAD hangs. `sigaltstack` works (libkernel's and raw syscall 53,
   measured in p2) with FreeBSD's `stack_t` `{ss_sp, size_t ss_size, int ss_flags}` and
   `SS_DISABLE` 0x4; the SDK's musl header swaps `ss_size`/`ss_flags` (and has `SS_DISABLE` 2), so

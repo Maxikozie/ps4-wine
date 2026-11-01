@@ -4,10 +4,171 @@ Written 2026-11-01, after milestone f passed (repo `13ddea7`, fork `73a9a10`). R
 then this, then `MILESTONES.md` (the p note and table, the g row and note), `HANDOFF-f.md` (plan
 `f`, "Games on the host", the native readiness notes that became p2) and the last lines of `LOG.md`.
 
-## Resume here (2026-11-01 21:20: p5 PASSED, phase p done; e still passes after 1100)
+## Resume here (2026-11-01 22:15: p6 PASSED, phase p done; p5 and e still pass on keep)
 
-**Phase p is complete:** p1 measured, p2, p3, p4, p5w and p5 passed. Next is milestone g (Bloodlines),
-but first the thread stacks' cost (below: "The root fix for the stack cost").
+**Phase p is complete:** p1-p6 and p5w passed. Next is milestone g (Bloodlines).
+
+**p6's console results** (LOG.md 22:03-22:13; one package, `ps4-wine-dd2ce32+dirty-p6.pkg`; launches set by
+env.txt only):
+
+| Launch | Result |
+|---|---|
+| L1 p6, `floor` | FAIL as planned, on `hold_flex_kib` only (49152 KiB for 8) |
+| L2 p6, `keep` | **PASS** |
+| L3 p5, default (keep), recorded | **PASS** |
+| L4 e, default (keep), recorded | **PASS** |
+| L5 p6, `WINE_PS5_WOW64_CPU=wow64native.dll` (keep) | **PASS** on the native CPU (`cpu=native`, caps 7): all 23 cases, both holds at 0 KiB, 33 threads kept. Window callbacks on new threads were tested on the native CPU for the first time (p5w and L2 ran on the translator) |
+
+**L1, the floor (today's path): reuse, not a leak.**
+- When the first 8 threads ended, none of their flexible memory came back (`hold_back_kib=0`).
+- The second 8 cost 0 KiB (`hold2_flex_kib=0`): libthr hands the cached stacks to later threads.
+- `stack_probe`, a single joinable thread joined twice, took 16384 KiB a round and kept it. My reading,
+  from FreeBSD libthr's source, not measured: one dead thread is below libthr's collection threshold of
+  5, so it was not reused.
+- So the floor's cost is the peak number of live floor threads times 16 MiB, never given back.
+
+**L2, keep: libkernel accepts Wine's own stacks.**
+- `PW_WINE64 thread_stack asked=keep policy=keep`; `threads_kept=33`, `threads_keep_refused=0`.
+- Patch 1100 logged no `thread frame moved` line: the threads ran on their kernel stacks.
+- Both sets of 8 cost 0 KiB of flexible memory. Free flexible memory was 270 MiB at the hold (L1: 158).
+- All 23 window cases passed: this is the p5w recheck.
+
+**L3, p5 on keep:**
+- `underruns=0`, 2131 non-silent grains, the HDMI tail at -12.8 dB mean; the segment unchanged.
+- Pinball's 3 threads were kept. Free flexible memory was 300 MiB at the line, against 252 MiB on the floor.
+
+**L4, e on keep:**
+- 600 frames; the HDMI frame at 36 s as in the earlier passes.
+- All 9 of ntdll's threads were kept.
+- libvulkan.prx's own copy of the layer created 6 threads (RADV's) and raised all 6. Its floor resolved
+  to **16384 KiB**, not the 1 MiB a Wine thread's kernel stack could have set, so RADV's threads still
+  take ~96 MiB.
+- Free flexible memory went from 431 to 270 MiB.
+- One scan-out copy of 292.8 ms (earlier runs had one of 125 and 161 ms; not investigated).
+
+**Built after L2, before L3** (runtime only, `runtime.sh --prx-only`, no reinstall):
+- `orbis::threadStackFloorPeek` was added to patch 0001, and `pw_wine_thread_stats` and
+  `pw_vulkan_thread_stats` now read the floor with it.
+- Why: under keep, no ntdll thread resolves the floor, so the title's read resolved it from its own
+  2 MiB thread (L2 printed `stack_floor_mib=2`; no thread was affected).
+- `stack_floor_mib=0` now means "not resolved". The package's title still links patch 0001 without the
+  peek, which changes nothing there.
+
+**Next:**
+1. The user commits, fork and repo.
+2. Milestone g, starting with its plan: g's planning question is whether to build a desktop host Wine to
+   play Bloodlines to the first map on the laptop.
+3. Not run, by the user's choice: p6 with `PS4WINE_EXE=C:\wincb64.exe` (64-bit threads).
+
+**Open for g, from p6's numbers:**
+- **Peak live threads and threads created:** the first Bloodlines runs report both. Live threads come from
+  Wine's own `nb_threads` (`ntdll/unix/thread.c`), since a kept thread no longer runs orbis-compat's
+  trampoline.
+- **Unix-only threads still take their module's floor**, at 16 MiB each and reused, not returned: RADV's
+  6 (about 96 MiB) and the main Wine thread's 16 MiB stack.
+- **The rest of the pool:** with keep, about 129-160 MiB of flexible memory is still used by other things
+  at Wine start (431 → 270-300 MiB). Not measured further.
+- **Small fallback:** keep is in force, so the warning about small without reuse (threads created over a
+  session) does not apply unless keep is refused.
+
+## Before the console runs: p6 built and host-tested (2026-11-01 22:00)
+
+**p6, the thread stacks, is the gate for g.** p1-p5 and p5w passed; p6 was built and host-tested before
+its first console run.
+
+**Cause** (source read, `refs/orbis-compat/src/orbis_thread.cpp:351-423`):
+- ntdll.prx links orbis-compat's `pthread_create` interposer, which looks only at the requested size.
+- Wine's `spawn_thread` sets its 1 MiB kernel stack with `pthread_attr_setstack`. Direct memory in Wine's
+  range at `0x1000000000`, guard 0.
+- 1 MiB is below the floor, which is 16 MiB: the size of the first thread that resolved it, Wine's main
+  thread. So the interposer builds a fresh attr that keeps only the detach state and the guard size.
+- libkernel then maps a 16 MiB stack out of flexible memory: ~12 MiB each, measured in p5w.
+
+**Built (uncommitted; the user commits):**
+- Repo:
+  - `patches/orbis-compat/0001-thread-caller-stack-policy.patch` (MIT, as the files it changes). When the
+    attr carries a stack address, `orbis::threadCallerStackPolicy` decides:
+    - **keep (default):** the attr goes to `scePthreadCreate` untouched, without the trampoline (its 64 KiB
+      alt array would sit at the top of Wine's kernel stack; Wine sets its own alt stack in
+      `init_thread_pipe`). A refusal is counted (`threads_keep_refused`), logged once, and falls back to
+      small.
+    - **small:** a fresh 512 KiB stack, with the trampoline.
+    - **floor:** the old behaviour.
+    - Requests without a stack address are unchanged.
+  - `build.sh compat` clones `refs/orbis-compat` into `build/src/orbis-compat` at `ORBIS_COMPAT_COMMIT`
+    (`common.sh`), applies `patches/orbis-compat/*.patch` (stamped, as `mesa_patch`), builds from the clone,
+    and stages its `include/`.
+  - `check.sh p6`, `tests/check_p6_test.sh` and 5 fixtures (in `probe-test`). The p5w, p5 and e fixtures
+    carry the new fields.
+  - MILESTONES: the p6 row, g's note, and the vo1080 polish item. THIRD_PARTY rows 28, 69, 75 and 76.
+- Fork:
+  - `wine/orbis/pw_wine_threads_orbis.c` exports `pw_wine_thread_policy(name)` and
+    `pw_wine_thread_caller_stacks(...)`.
+  - `wine/orbis/pw_vulkan_radv_orbis.c` exports `pw_vulkan_thread_stats` (libvulkan.prx's own copy of the
+    layer: created, raised, floor). The floor is read only when libvulkan created a thread, since reading
+    it resolves it.
+  - Title:
+    - `wine64_main_orbis.c` hands env.txt's `WINE_PS5_THREAD_STACK` to ntdll right after ntdll.prx loads
+      (log line `PW_WINE64 thread_stack asked=.. policy=..`).
+    - `pw_milestone_orbis.c` has plan **p6** with stages `stack_probe`, `wow_bind`, `display`, `wincb`.
+    - New fields on the p5, p5w, p6 and e lines: `stack_policy threads_kept threads_small
+      threads_keep_refused`.
+    - The hold probe now takes 5 samples, adding `hold_back_kib` and `hold2_flex_kib`.
+    - The e line also gets ntdll's thread fields and libvulkan's: `vk_threads_created vk_threads_raised
+      vk_stack_floor_kib`.
+    - `PW_STAGE_FIELDS` is 1024.
+  - `tests/wine_wincb.c`: the 8 hold threads come twice (`WINCB hold2 n=`, `hold2_end`, `hold2_windows`).
+  - `tests/lab/pw_foreign_stack.c`: `PW_FOREIGN_STACK_KIB`.
+  - `tests/test_wine_wincb.py`: both rounds checked everywhere; new case, the shim at 512 KiB with 1100.
+- `stack_probe` (title only, before Wine): a joinable thread with libkernel's own 16 MiB stack (guard 0, the
+  shape the floor gives Wine's threads), through `scePthreadCreate`, sampled alive, joined, twice. The fields
+  are `sp_lib_rc`, `sp_lib_alive1_kib`, `sp_lib_kib1`, `sp_lib_alive2_kib` and `sp_lib_kib2`: libkernel's
+  reuse without Wine. It reserves nothing at Wine's base.
+
+**The rule, fixed before the first p6 launch** (`check.sh p6`): p5w's rule plus `threads_create_failed=0
+hold_flex_kib<=8192 hold2_flex_kib<=8192`.
+- 8192 KiB is 8 live threads at 1 MiB each: twice the small policy's 512 KiB, leaving room for libkernel's
+  thread object, TLS and the 16 KiB granule. 60 threads would then take at most 60 MiB of the ~431 MiB pool.
+- The floor's 98304 fails it twelvefold.
+- Recorded, not gated: `stack_policy`, `threads_kept/small/keep_refused`, `hold_back_kib`, `sp_lib_*`, and
+  e's `vk_*`.
+- The host count of Bloodlines' threads was dropped from this step (the user, 2026-11-01): either fix
+  brings a thread to about 0 or 512 KiB, so 30 or 60 threads both fit.
+
+**Next, one package, runtime and prefix, launches by env.txt only:**
+
+| # | env.txt | Decides |
+|---|---|---|
+| L1 | `PS4WINE_MILESTONE=p6 WINE_PS5_THREAD_STACK=floor` | today's path: reuse or leak at Wine's level (`hold2_flex_kib` about 0 = reuse, about 98304 = leak; `hold_back_kib`) and at libkernel's (`sp_lib_*`). Expected FAIL on `hold_flex_kib` (the baseline) |
+| L2 | `PS4WINE_MILESTONE=p6 WINE_PS5_THREAD_STACK=keep` | the fix. libkernel accepted Wine's stack if `threads_keep_refused=0` and patch 1100 logs no `thread frame moved` line (its silence shows the threads ran on their kernel stacks). Expected PASS |
+| L3 | `PS4WINE_MILESTONE=p5`, recorded | sound, the segment, `flex_mib` against 252 |
+| L4 | `PS4WINE_MILESTONE=e`, recorded | DXVK and RADV with kept stacks; `vk_stack_floor_kib` (whether a Wine thread on a 1 MiB kernel stack set libvulkan's floor) |
+| (L5) | p6 + `PS4WINE_EXE=C:\wincb64.exe` | 64-bit threads |
+| (L6) | p6 + `WINE_PS5_WOW64_CPU=wow64native.dll` | new threads on the native CPU |
+
+- If L2 shows `threads_keep_refused>0`, small becomes the default. That is one word in the patch, then
+  `build.sh compat`, `build.sh wine --skip-host` and `runtime.sh --prx-only`. L3 and L4 run on it.
+- The p5w recheck is L2: the same wincb32.exe and 23 cases, and p6's rule contains p5w's.
+
+**For g** (from this step):
+- The first Bloodlines console runs report **peak live threads** and **threads created over the session**.
+  - Live threads come from Wine's own `nb_threads` counter (`ntdll/unix/thread.c`). A thread whose caller-set
+    stack is passed through no longer runs orbis-compat's trampoline, so orbis-compat does not see it live.
+  - If the small fallback is in use and stacks are not reused, threads created over a 30-minute session is
+    the number to watch.
+- Unix-only threads (RADV's in libvulkan.prx, the in-process server's) still take their module's floor. If
+  L1 shows that floor stacks leak, those are a leak to watch too. L4's `vk_stack_floor_kib` says what floor
+  RADV's threads got.
+- Whether g needs a desktop host Wine (X11, PulseAudio: none of the fork's host trees has either) to play to
+  the first map on the laptop is g's planning question, not p6's.
+
+**Not tested:** a long run, hand play with sound, Bloodlines' real thread count, suspension of and faults in
+system calls on kept-stack threads.
+
+## Earlier: p5 PASSED, phase p's steps done (2026-11-01 21:20; e still passes after 1100)
+
+**p1-p5 and p5w passed.** Next was milestone g (Bloodlines), but first the thread stacks' cost (below: "The
+root fix for the stack cost"), which became p6 above.
 
 **p5's underrun count, as this plan defines it** (built after the 21:00 run):
 - Code: fork `src/pw_audio_mix.h` (`PwAudioStarve`, unit-tested in `tests/test_pw_audio_mix.c`),

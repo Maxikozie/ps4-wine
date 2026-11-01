@@ -1,0 +1,180 @@
+orbis-compat: a caller-set thread stack is kept (policy keep|small|floor)
+
+The pthread_create interposer raised every request below its floor (the size of the
+thread that first resolved it: 16 MiB in the ps4-wine title) and rebuilt the attr with
+only the detach state and the guard size, so a caller that set its own stack address
+(Wine's spawn_thread: the thread's 1 MiB kernel stack, direct memory Wine owns) lost it
+and each thread cost a 16 MiB libkernel stack (~12 MiB of flexible memory, measured on
+the console 2026-11-01, p5w).
+
+orbis::threadCallerStackPolicy() chooses what such a caller gets:
+  keep  (default) its attr goes to scePthreadCreate untouched, no trampoline; a refused
+        create is counted and falls back to small
+  small a fresh stack of 512 KiB (configurable), with the trampoline
+  floor the old behaviour
+orbis::threadCallerStacks() reports kept/small/refused and the policy;
+orbis::threadStackFloorPeek() reads the floor without resolving it (under keep, Wine's
+threads never resolve it, and a reader's threadStackFloor() would resolve it from the
+reader's own stack).
+Callers that set no stack address are unaffected.
+
+Against orbis-compat 6922a7b6f4291a28edd239f1a4db50ed7aa00359. MIT, as the files it
+changes. Applied by scripts/ps4/build.sh compat to a clone under build/src.
+
+diff --git a/include/orbis_thread.h b/include/orbis_thread.h
+index 0a29ad1..e0fb16f 100644
+--- a/include/orbis_thread.h
++++ b/include/orbis_thread.h
+@@ -107,6 +107,34 @@ void threadAltStacks(unsigned long *installed, unsigned long *failed, unsigned l
+ /// The size of the alternate signal stack each thread gets, in bytes.
+ size_t threadAltStackSize();
+ 
++/* ------------------------------------------------------------------ caller-set stacks (patch 0001)
++ *
++ * A caller that set a stack ADDRESS (pthread_attr_setstack) chose its stack and owns it. Raising it
++ * like a caller that chose nothing drops that stack: Wine's threads then each took a floor-sized
++ * stack (16 MiB, ~12 MiB of flexible memory) beside the 1 MiB kernel stack Wine had made for them.
++ *
++ *   keep  (default)  the caller's attr goes to scePthreadCreate untouched, no trampoline (the caller
++ *                    owns its signal stack too). A refused create falls back to small, counted.
++ *   small            a fresh stack of smallBytes (default 512 KiB) instead, with the trampoline.
++ *   floor            the caller is raised like any other (the behaviour before this patch).
++ *
++ * A caller that set no address is unaffected by the policy. */
++enum { kCallerStackKeep = 0, kCallerStackSmall = 1, kCallerStackFloor = 2 };
++
++/// Sets the policy for caller-set stacks; smallBytes below PTHREAD_STACK_MIN (0) keeps the current
++/// small size. An unknown policy is ignored.
++void threadCallerStackPolicy(int policy, size_t smallBytes);
++
++/// The floor if it has been resolved, else 0, without resolving it. threadStackFloor() resolves it
++/// from the CALLING thread's stack, so a reader that has created no thread through this copy would
++/// set the floor for every later thread (patch 0001: under keep, Wine's threads never resolve it).
++size_t threadStackFloorPeek();
++
++/// Threads created on the caller's own stack, given the small stack instead (small, or keep
++/// refused), how many keeps libkernel refused, and the policy in force.
++void threadCallerStacks(unsigned long *kept, unsigned long *small, unsigned long *refused,
++                        int *policy);
++
+ }
+ 
+ #endif /* _ORBIS_THREAD_H */
+diff --git a/src/orbis_thread.cpp b/src/orbis_thread.cpp
+index d609bd5..a9b08c2 100644
+--- a/src/orbis_thread.cpp
++++ b/src/orbis_thread.cpp
+@@ -32,6 +32,18 @@ size_t g_defaultStack = 0;
+ std::atomic<unsigned long> g_created{0};
+ std::atomic<unsigned long> g_raised{0};
+ 
++// Caller-stack policy (patch 0001): what a caller that set its own stack ADDRESS gets. Such a
++// caller (Wine's spawn_thread: the thread's 1 MiB kernel stack, in direct memory it owns) was raised
++// like any other, so its stack was dropped and every thread cost a floor-sized stack out of the
++// flexible pool: ~12 MiB each, measured on the console 2026-11-01 (p5w, 8 live threads 98304 KiB).
++// keep passes the caller's attr through untouched; small gives it a fresh stack of g_callerSmall
++// (also the fallback when libkernel refuses the caller's stack); floor is the old behaviour.
++std::atomic<int>           g_callerPolicy{orbis::kCallerStackKeep};
++std::atomic<size_t>        g_callerSmall{512*1024};
++std::atomic<unsigned long> g_kept{0};
++std::atomic<unsigned long> g_small{0};
++std::atomic<unsigned long> g_keepRefused{0};
++
+ // ⚠ THE INTERPOSER USED TO LOG ONLY ON SUCCESS, AND THAT IS WHY THE ONE FAILURE THIS PORT KEEPS
+ // MEETING HAS NEVER BEEN NAMED FROM OUR SIDE.
+ //
+@@ -317,6 +329,11 @@ size_t orbis::threadStackFloor() {
+   return resolveFloor();
+   }
+ 
++size_t orbis::threadStackFloorPeek() {
++  const size_t v = g_floor.load(std::memory_order_relaxed);
++  return v==~size_t(0) ? 0 : v;
++  }
++
+ void orbis::threadFailures(unsigned long* createFailed, unsigned long* attrFailed) {
+   if(createFailed!=nullptr) *createFailed = g_createFailed.load(std::memory_order_relaxed);
+   if(attrFailed  !=nullptr) *attrFailed   = g_attrFailed.load(std::memory_order_relaxed);
+@@ -338,6 +355,21 @@ size_t orbis::threadAltStackSize() {
+   return kAltStackSize;
+   }
+ 
++void orbis::threadCallerStackPolicy(int policy, size_t smallBytes) {
++  if(policy==kCallerStackKeep || policy==kCallerStackSmall || policy==kCallerStackFloor)
++    g_callerPolicy.store(policy,std::memory_order_relaxed);
++  if(smallBytes>=size_t(PTHREAD_STACK_MIN))
++    g_callerSmall.store(smallBytes,std::memory_order_relaxed);
++  }
++
++void orbis::threadCallerStacks(unsigned long* kept, unsigned long* small, unsigned long* refused,
++                               int* policy) {
++  if(kept   !=nullptr) *kept    = g_kept.load(std::memory_order_relaxed);
++  if(small  !=nullptr) *small   = g_small.load(std::memory_order_relaxed);
++  if(refused!=nullptr) *refused = g_keepRefused.load(std::memory_order_relaxed);
++  if(policy !=nullptr) *policy  = g_callerPolicy.load(std::memory_order_relaxed);
++  }
++
+ // ------------------------------------------------------------------ the interposer
+ //
+ // ⚠ THIS DEFINITION WINS OVER libkernel's, and that is a linker rule rather than a trick: a symbol
+@@ -352,6 +384,30 @@ extern "C" int pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+                               void* (*start)(void*), void* arg) {
+   g_created.fetch_add(1,std::memory_order_relaxed);
+ 
++  // Caller-stack policy (patch 0001). A caller that set a stack address owns that stack and its
++  // signal stack: under keep the attr goes to libkernel untouched and the thread starts on the
++  // caller's routine, without the trampoline (its 64 KiB array would sit at the top of the caller's
++  // stack, where Wine puts its syscall frame). scePthreadCreate is called directly so that a refusal
++  // is not counted as a pool failure; it is counted here and the request falls through to small.
++  void*     callerAddr  = nullptr;
++  size_t    callerSize  = 0;
++  const int policy      = g_callerPolicy.load(std::memory_order_relaxed);
++  const bool callerStack = attr!=nullptr && pthread_attr_getstack(attr,&callerAddr,&callerSize)==0 &&
++                           callerAddr!=nullptr;
++  if(callerStack && policy==orbis::kCallerStackKeep) {
++    const int rcKeep = scePthreadCreate(thread,attr,start,arg,"orbis");
++    if(rcKeep==0) {
++      g_kept.fetch_add(1,std::memory_order_relaxed);
++      return 0;
++      }
++    const unsigned long n = g_keepRefused.fetch_add(1,std::memory_order_relaxed)+1;
++    if(powerOfTwo(n) && orbis_log_enabled()!=0)
++      orbis_log("thread caller stack REFUSED: scePthreadCreate returned %#x for stack %p size %llu "
++                "(%lu refusal(s)); falling back to a %llu KiB stack of its own",
++                (unsigned)rcKeep,callerAddr,(unsigned long long)callerSize,n,
++                (unsigned long long)(g_callerSmall.load(std::memory_order_relaxed)/1024));
++    }
++
+   // ⚠ THE TRAMPOLINE IS INSTALLED FIRST AND FOR EVERY PATH BELOW, INCLUDING THE ONE THAT RAISES
+   // NOTHING. The stack floor and the alternate signal stack are separate questions: a caller that
+   // chose its own 8 MB stack wants no interference with the size and still wants an overflow on
+@@ -372,7 +428,10 @@ extern "C" int pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+     entryArg = sa;
+     }
+ 
+-  const size_t floor = resolveFloor();
++  // Caller-stack policy (patch 0001): small, or keep refused. A fresh stack of g_callerSmall in place
++  // of the caller's, whatever the floor is.
++  const bool   toSmall = callerStack && policy!=orbis::kCallerStackFloor;
++  const size_t floor   = toSmall ? g_callerSmall.load(std::memory_order_relaxed) : resolveFloor();
+   if(floor==0)
+     return createThread(thread,attr,entry,entryArg,sa);
+ 
+@@ -383,7 +442,7 @@ extern "C" int pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+   if(attr!=nullptr && pthread_attr_getstacksize(attr,&want)!=0)
+     want = 0;
+ 
+-  if(want>=floor)
++  if(want>=floor && !toSmall)
+     return createThread(thread,attr,entry,entryArg,sa);
+ 
+   // Raise it. The caller's attr is const and may be reused for other threads, so the change goes on
+@@ -409,7 +468,7 @@ extern "C" int pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+   const int rc    = (rcSet==0) ? createThread(thread,&raised,entry,entryArg,sa)
+                                : createThread(thread,attr,entry,entryArg,sa);
+   if(rcSet==0 && rc==0)
+-    g_raised.fetch_add(1,std::memory_order_relaxed);
++    (toSmall ? g_small : g_raised).fetch_add(1,std::memory_order_relaxed);
+ 
+   pthread_attr_destroy(&raised);
+ 

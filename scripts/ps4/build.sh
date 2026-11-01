@@ -11,12 +11,12 @@ usage: scripts/ps4/build.sh --check-toolchain
 
   --check-toolchain  report every host tool, SDK path and reference checkout the
                      port needs; exit 1 if a required one is missing
-  compat             orbis-compat -> build/orbis-compat (+ build/orbis-compat-stage)  (milestone a)
+  compat             orbis-compat + patches/orbis-compat -> build/orbis-compat (+ build/orbis-compat-stage)  (milestone a)
   mesa               mesa-ps4 RADV + patches/mesa-ps4/*.patch -> build/mesa-ps4/src/amd/vulkan/libvulkan_radeon.a
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p5)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
@@ -94,16 +94,44 @@ check_toolchain() {
     log "toolchain check: all required items present"
 }
 
-# orbis-compat out of tree; refs/orbis-compat stays untouched. The stage directory
-# gives consumers the <dir>/include + <dir>/build/liborbis-compat.a layout that
+# The clone at $ORBIS_COMPAT_COMMIT plus patches/orbis-compat/*.patch, as mesa_patch does for
+# mesa-ps4: a stamp of the series and the resulting diff skips an unchanged series. The clone is
+# ours (build/src), never refs/.
+compat_patch() {
+    local stamp="$ORBIS_COMPAT_SRC/.git/ps4wine-patches" want p
+    if [ ! -d "$ORBIS_COMPAT_SRC/.git" ]; then
+        log "orbis-compat: cloning $ORBIS_COMPAT_DIR -> $ORBIS_COMPAT_SRC"
+        mkdir -p "$(dirname "$ORBIS_COMPAT_SRC")"
+        git clone --quiet --no-checkout "$ORBIS_COMPAT_DIR" "$ORBIS_COMPAT_SRC"
+    fi
+    want="$({ echo "$ORBIS_COMPAT_COMMIT"; for p in "$REPO_ROOT"/patches/orbis-compat/*.patch; do [ -f "$p" ] && sha256sum < "$p"; done; } | sha256sum | cut -d' ' -f1)"
+    if [ -f "$stamp" ] && [ "$(git -C "$ORBIS_COMPAT_SRC" rev-parse HEAD)" = "$ORBIS_COMPAT_COMMIT" ] && \
+       [ "$(sed -n 1p "$stamp")" = "$want" ] && \
+       [ "$(sed -n 2p "$stamp")" = "$(git -C "$ORBIS_COMPAT_SRC" diff --no-ext-diff HEAD | sha256sum | cut -d' ' -f1)" ]; then
+        log "orbis-compat: $ORBIS_COMPAT_COMMIT with patches/orbis-compat already applied"; return
+    fi
+    git -C "$ORBIS_COMPAT_SRC" -c advice.detachedHead=false checkout --quiet --force "$ORBIS_COMPAT_COMMIT" ||
+        die "$ORBIS_COMPAT_DIR does not have orbis-compat $ORBIS_COMPAT_COMMIT"
+    git -C "$ORBIS_COMPAT_SRC" reset --quiet --hard "$ORBIS_COMPAT_COMMIT"
+    for p in "$REPO_ROOT"/patches/orbis-compat/*.patch; do
+        [ -f "$p" ] || continue
+        log "orbis-compat: applying $(basename "$p")"
+        git -C "$ORBIS_COMPAT_SRC" apply "$p" || die "$(basename "$p") does not apply to orbis-compat $ORBIS_COMPAT_COMMIT"
+    done
+    printf '%s\n%s\n' "$want" "$(git -C "$ORBIS_COMPAT_SRC" diff --no-ext-diff HEAD | sha256sum | cut -d' ' -f1)" > "$stamp"
+}
+
+# orbis-compat out of tree, from the patched clone; refs/orbis-compat stays untouched. The stage
+# directory gives consumers the <dir>/include + <dir>/build/liborbis-compat.a layout that
 # mesa-ps4's scripts and the kit's cross file hardcode.
 build_compat() {
     [ -f "$OO_PS4_TOOLCHAIN/link.x" ] || die "no OpenOrbis toolchain at $OO_PS4_TOOLCHAIN (scripts/ps4/setup-host.sh --install-toolchain)"
-    log "orbis-compat: $ORBIS_COMPAT_DIR -> $ORBIS_COMPAT_BUILD"
-    "$ORBIS_COMPAT_DIR/build.sh" --out "$ORBIS_COMPAT_BUILD"
+    compat_patch
+    log "orbis-compat: $ORBIS_COMPAT_SRC -> $ORBIS_COMPAT_BUILD"
+    "$ORBIS_COMPAT_SRC/build.sh" --out "$ORBIS_COMPAT_BUILD"
     rm -rf "$ORBIS_COMPAT_STAGE"
     mkdir -p "$ORBIS_COMPAT_STAGE"
-    ln -s "$ORBIS_COMPAT_DIR/include" "$ORBIS_COMPAT_STAGE/include"
+    ln -s "$ORBIS_COMPAT_SRC/include" "$ORBIS_COMPAT_STAGE/include"
     ln -s "$ORBIS_COMPAT_BUILD" "$ORBIS_COMPAT_STAGE/build"
     [ -f "$ORBIS_COMPAT_STAGE/build/liborbis-compat.a" ] || die "no liborbis-compat.a after the build"
     log "orbis-compat: ok ($ORBIS_COMPAT_STAGE)"
@@ -297,6 +325,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_p4_test.sh"
     "$REPO_ROOT/tests/check_p5_test.sh"
     "$REPO_ROOT/tests/check_p5w_test.sh"
+    "$REPO_ROOT/tests/check_p6_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the

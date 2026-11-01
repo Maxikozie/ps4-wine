@@ -33,8 +33,10 @@ export OO_PS4_TOOLCHAIN
 # ICU 78 ("Couldn't find a valid ICU package"); it needs no culture data.
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT="${DOTNET_SYSTEM_GLOBALIZATION_INVARIANT:-1}"
 ORBIS_COMPAT_DIR="${ORBIS_COMPAT_DIR:-$REFS_DIR/orbis-compat}"     # source (read-only)
+ORBIS_COMPAT_COMMIT="${ORBIS_COMPAT_COMMIT:-6922a7b6f4291a28edd239f1a4db50ed7aa00359}"
+ORBIS_COMPAT_SRC="${ORBIS_COMPAT_SRC:-$BUILD_DIR/src/orbis-compat}" # clone + patches/orbis-compat (build.sh compat)
 ORBIS_COMPAT_BUILD="${ORBIS_COMPAT_BUILD:-$BUILD_DIR/orbis-compat}" # build.sh compat output
-# What consumers (mesa, probes) see as ORBIS_COMPAT_DIR: include/ -> the source,
+# What consumers (mesa, probes) see as ORBIS_COMPAT_DIR: include/ -> the patched clone,
 # build/ -> ORBIS_COMPAT_BUILD, the layout mesa-ps4's scripts expect.
 ORBIS_COMPAT_STAGE="${ORBIS_COMPAT_STAGE:-$BUILD_DIR/orbis-compat-stage}"
 ORBIS_KIT_DIR="${ORBIS_KIT_DIR:-$REFS_DIR/orbis-porting-kit}"
