@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first gc launch (format of logs.sh: HH:MM:SS N|K text)
+03:20:00 N PS4WINE gc1 cursor cursor=ok mem=ok mem_align=65536 mem_rc=0 enable=0 position=0 image=0 disable=0 enable_twice=0 position_moved=0 position_back=0 position_edge=0 enable_again=0 reopen=ok reopen_disable=0 flips=2870 flip_errors=0 hello=ok build=abc1234+dirty stages=2/2 stopped=- launches=1 resumed=- session_s=60

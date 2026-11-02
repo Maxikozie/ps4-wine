@@ -21,7 +21,7 @@ usage: scripts/ps4/pkg.sh --elf FILE [options]
   --version V        APP_VER/VERSION (default 01.00)
   --assets DIR       copied into the package as assets/ (mounted at /app0/assets); create-gp4
                      accepts only a few root folders, keep everything under assets/
-  --icon FILE        512x512 24-bit PNG without alpha (default: generated solid colour)
+  --icon FILE        512x512 24-bit PNG without alpha (default: assets/icon0.png, Wine's logo)
   --out DIR          output directory (default dist/)
   --stage DIR        staging directory (default build/pkg/NAME)
   --dry-run          print the tool commands without running them (automatic when tools are missing)
@@ -79,9 +79,14 @@ run cp "$ELF" "$BUILD_DIR/elf/$NAME-$BID.elf"    # the exact ELF, for llvm-symbo
 run cp "$SAMPLES/sce_sys/about/right.sprx" "$STAGE/sce_sys/about/"
 run cp "$SAMPLES/sce_module/libc.prx" "$SAMPLES/sce_module/libSceFios2.prx" "$STAGE/sce_module/"
 
-# 3. icon (512x512, 24-bit, no alpha)
-if [ -n "$ICON" ]; then run cp "$ICON" "$STAGE/sce_sys/icon0.png"
-else run ffmpeg -loglevel error -y -f lavfi -i "color=c=0x1f2a44:s=512x512" -frames:v 1 -pix_fmt rgb24 "$STAGE/sce_sys/icon0.png"; fi
+# 3. icon (512x512, 24-bit, no alpha): every package shows Wine's logo unless --icon names another.
+# From: Wine dlls/user32/resources/oic_winlogo.ico @ 490f6d5 (LGPL-2.1-or-later): its 256x256 PNG
+# entry (stream 7), scaled to 448x448 and centred on white 512x512, rgb24, rendered once with
+#   ffmpeg -i oic_winlogo.ico -f lavfi -i color=c=white:s=512x512 -filter_complex \
+#     "[0:7]scale=448:448:flags=lanczos[l];[1:0][l]overlay=32:32,format=rgb24" -frames:v 1 -pix_fmt rgb24 icon0.png
+ICON="${ICON:-$REPO_ROOT/assets/icon0.png}"
+[ "$DRY" = 1 ] || [ -f "$ICON" ] || die "no such icon: $ICON"
+run cp "$ICON" "$STAGE/sce_sys/icon0.png"
 
 FILES="eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx sce_module/libc.prx sce_module/libSceFios2.prx"
 

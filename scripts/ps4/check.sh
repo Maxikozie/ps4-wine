@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -76,6 +76,18 @@ g1 d3d9tri32.exe under DXVK's x32 d3d9 with the vampire profile's settings (bits
 mark (menu=1, exit=running); g the 300 s window after the second mark (gameplay=1), session_s counted
 from that mark; gseg an interior or hub segment's fields, recorded. faults_unresolved in the g lines adds
 Wine's unhandled-exception reports to the translator's count.
+g's input step, VideoOut's hardware cursor (fixed 2026-11-02 before the first runs): gc1 the four cursor
+calls on the title's own VideoOut (plan gc1, no Wine): mem=ok, enable/position/image/disable all 0, and over
+HDMI (--shot, a frame of the recording in state 2: two white bars at the bottom left) test image A's white
+and black quadrants at 944,524 = 255,255,255 and 976,524 = 0,0,0 on the green frame; gc2 libvulkan.prx's
+pw_videoout_cursor called after every present of e1's frames (plan gc2): present=ok, 300 frames, the
+1920x1080 swapchain, the export found, no failed call, shown in both swapchains (cursor_shows,
+cursor_reopen_shows) and "no output" between them (cursor_noout), and over HDMI (--shot, the first 5 s)
+image A converted right over the cyan clear: 944,524 = 255,255,255, 976,524 = 0,0,0, 944,556 = 255,0,0 (red
+and blue in order) and 976,556 = 0,255,255 (alpha 0 shows the frame); gc Bloodlines' menu with the
+pointer (the line beside g2 at the first mark): menu=1, cursor_shows >= 1, cursor_errors=0, no unresolved
+fault, exit=running; its HDMI frame is evidence, not checked (the pointer is where the user left it).
+The cursor is VideoOut's plane, not part of the frame, so gc1 and gc2 are HDMI only (--fb is refused).
 p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix.h): stretches of grains in
 which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
@@ -100,11 +112,15 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
         die "p5: give --audio WAV --audio-window S:D (the recording's sound and the tail's window) or --no-audio"
+fi
+if [[ "$MS" == gc[12] ]]; then
+    [ "$FB" = 0 ] || die "$MS: the cursor is VideoOut's plane, not in the framebuffer: HDMI only (--shot FRAME from the recording)"
+    [ -n "$SHOT" ] || [ "$NOSHOT" = 1 ] || die "$MS: give --shot FRAME (the recording's frame of the gated state) or --no-shot"
 fi
 if [[ "$MS" == p[34] ]]; then
     [ "$FB" = 0 ] || die "$MS: the pattern is checked over HDMI only (--shot FRAME from the recording)"
@@ -137,7 +153,7 @@ if [ -z "$LINE" ]; then
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
-          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg ]]; then
+          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -275,6 +291,22 @@ case "$MS" in
         HAS_PIXEL=1; PIXELS=("960,540=255,255,0" "240,135=0,255,0") ;;
     # g2: Bloodlines' main menu, the user's first mark; an HDMI frame is kept as evidence, not checked.
     g2) word vtmb; req menu eq 1; req faults_unresolved eq 0; req exit eq running ;;
+    # The input step's cursor (docs/ps4/HANDOFF-g.md), fixed 2026-11-02 before the first gc runs. Test image A
+    # (the fork's wine/orbis/pw_videoout_cursor_orbis.h) at 928,508: its quadrants' centres 944,524 (white),
+    # 976,524 (black), 944,556 (red) and 976,556 (alpha 0).
+    # gc1: the four calls on the title's green VideoOut frame. White and opaque black read the same in either
+    # channel order, so this gates only "the calls work and the image sits at frame pixels"; the order and
+    # the alpha rule are recorded from the same recording (they set the port's conversion).
+    gc1) word cursor; req mem eq ok; req enable eq 0; req position eq 0; req image eq 0; req disable eq 0
+         HAS_PIXEL=1; PIXELS=("944,524=255,255,255" "976,524=0,0,0") ;;
+    # gc2: the port, pw_videoout_cursor in libvulkan.prx, over e1's cyan frames: now red and alpha are gated.
+    gc2) word vkcursor; req present eq ok; req frames ge 300; req gpu_hang eq 0; req swapchain eq 1920x1080
+         req cursor_export eq ok; req cursor_errors eq 0; req cursor_shows ge 1; req cursor_reopen_shows ge 1
+         req cursor_noout ge 1
+         HAS_PIXEL=1; PIXELS=("944,524=255,255,255" "976,524=0,0,0" "944,556=255,0,0" "976,556=0,255,255") ;;
+    # gc: Bloodlines' menu at the first mark, the pointer over DXVK's frames; the HDMI frame is evidence only.
+    gc) word vtmb; req menu eq 1; req cursor_shows ge 1; req cursor_errors eq 0; req faults_unresolved eq 0
+        req exit eq running ;;
     # gseg: a 60 s interior or hub segment: recorded, so only the fields are checked.
     gseg) word vtmb; req seg in int,hub
           for k in fps_avg presents window_s crossings_per_frame frame_us_avg frame_us_p95 seg_inputs flex_mib; do

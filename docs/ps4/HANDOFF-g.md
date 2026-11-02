@@ -47,7 +47,91 @@ window (the second mark in the first map) was never reached.
   ~1 min of empty merged reads; `threads_live` reads correctly.
 - **check.sh:** with no PS4WINE line, MESA `info:` lines no longer count as a crash.
 
-**Next session, in order:**
+**The input step, started 2026-11-02 03:00: the cursor first, then the USB mouse research.**
+
+The cursor is ported in three sub-steps. Each rule was written into `check.sh` (with fixtures in
+`tests/check_g_test.sh`) before its first run.
+
+- **gc1: the four calls, title only** (plan `gc1`, fork `native/orbis/pw_cursor_probe_orbis.c`).
+  - The title opens its own VideoOut and flips a green 1920x1080 frame every vblank.
+  - It takes 64 KiB of Garlic for the images, as the PS5 does (2 MiB alignment if 64 KiB is refused).
+  - It writes test image A and image B (`wine/orbis/pw_videoout_cursor_orbis.h`), then runs 8 states of 6 s.
+    White bars at the bottom left number each state, so any frame of the recording names its state:
+
+    | State | Call |
+    |---|---|
+    | 1 | none (green only) |
+    | 2 | `Enable(A)` + `SetPosition(928,508)`: **the gated state** |
+    | 3 | `Enable(A)` again while enabled, `SetPosition(100,100)` |
+    | 4 | back to (928,508), `SetImageAddress(B)` |
+    | 5 | `SetPosition(1900,1060)` (partly off the frame) |
+    | 6 | `Disable` |
+    | 7 | `Enable(A)` again at (928,508) |
+    | 8 | port closed with the cursor shown, reopened, no call; then `Disable` on the new handle |
+
+  - Line: `PS4WINE gc1 cursor cursor= mem= mem_align= mem_rc= enable= position= image= disable= enable_twice=
+    position_moved= position_back= position_edge= enable_again= reopen= reopen_disable= flips= flip_errors= hello=`.
+  - Statuses read `0` or hex.
+  - `IsUpdatePending` is left out: its PS4 arguments are unknown.
+- **gc2: the port, a runtime change.**
+  - Plan `gc2` runs e1's stages, but `pw_vk_present_frames` presents 900 + 360 frames.
+  - After every present it calls libvulkan.prx's `pw_videoout_cursor`, looked up as win32u does, with image A:
+    - frames 0-299 at the test place, 300-599 at (100,100), then hidden;
+    - once between the swapchains (expected 1, no output);
+    - at the test place again in the second swapchain.
+  - Line: `PS4WINE gc2 vkcursor present= frames= ... cursor_export= cursor_shows= cursor_reopen_shows= cursor_hides=
+    cursor_noout= cursor_errors= cursor_rc= vk_cursor_updates= vk_cursor_rc= vk_cursor_format= fb_cursor= release= hello=`.
+  - `fb_cursor` is RADV's readback at 944,524, recorded: cyan means the cursor is VideoOut's plane, not part of the frame.
+- **The port** (fork `wine/orbis/pw_vulkan_radv_orbis.c`, the PS5's section):
+  - **Handle.** `--wrap=sceVideoOutOpen` and `--wrap=sceVideoOutClose` (new: mesa-ps4 opens and closes VideoOut per
+    swapchain) keep the handle. The cursor state goes with a closed handle.
+  - **Image.** It is cut to 64x64 and converted by `PW_CURSOR_ORBIS_FORMAT` (0 until gc1 measures the plane).
+  - **Position.** It maps onto the last swapchain's extent (mesa-ps4 has no `wsi_videoout_present_rect`).
+  - **Exports.** `pw_videoout_cursor` and `pw_vulkan_cursor_stats` are in libvulkan's descriptor
+    (`tools/build_wine_orbis.sh`).
+- **gc: Bloodlines' menu with the pointer.**
+  - Plan g emits `PS4WINE gc vtmb menu= cursor_stats= cursor_calls= cursor_shows= cursor_updates= cursor_hides=
+    cursor_noout= cursor_errors= cursor_rc= cursor_at=x,y cursor_output= cursor_format= faults_unresolved= exit=`
+    beside g2 at the first mark.
+  - The Vulkan plans also log the counters at their end (a `PW_MS step cursor at the end:` record, not in their lines).
+
+**The rules** (`check.sh`, fixed 2026-11-02 before the first gc runs). Test image A sits at 928,508. The centres
+of its quadrants are 944,524 (white), 976,524 (black), 944,556 (red) and 976,556 (alpha 0).
+
+| Step | Gate |
+|---|---|
+| gc1 | `mem=ok enable=0 position=0 image=0 disable=0` + HDMI `--shot` (state 2): `944,524=255,255,255`, `976,524=0,0,0`. White and opaque black read the same in either channel order. **Recorded:** the order (944,556 red or blue), the alpha rule (976,556 green straight, white additive, magenta ignored), image B's blend, the position units, the edge and the reopen |
+| gc2 | `present=ok frames>=300 gpu_hang=0 swapchain=1920x1080 cursor_export=ok cursor_errors=0 cursor_shows>=1 cursor_reopen_shows>=1 cursor_noout>=1` + HDMI `--shot` (first 5 s): `944,524=255,255,255 976,524=0,0,0 944,556=255,0,0 976,556=0,255,255` |
+| g1m, g1, e | unchanged, run again on gc2's runtime |
+| gc | `menu=1 cursor_shows>=1 cursor_errors=0 faults_unresolved=0 exit=running`. **Evidence, not gated:** an HDMI frame of the menu with the pointer, and the user's word that the pointer shows, follows the pad and works at character creation |
+
+Both cursor rules are HDMI only: `check.sh` refuses `--fb` for them, because the cursor is not in the framebuffer.
+
+**gc1 PASSED (LOG.md 03:25).** Every call returned 0, and the 64 KiB Garlic block was accepted at 64 KiB
+alignment. Over HDMI, the PS4's cursor plane behaves as the PS5's:
+- **Format:** it reads win32u's straight-alpha ARGB words. Red stays red (236,0,0), and alpha 0 shows the frame.
+- **Blending:** half alpha blends straight (125,255,119 over green).
+- **Position:** in frame pixels, 1:1, clipped at the frame's edge.
+- **Closing:** a closed port takes the cursor with it.
+
+So the port converts nothing (`PW_CURSOR_ORBIS_FORMAT 0`). The evidence is the HDMI frames
+`logs/20261102-gc1-state{2,3,4,5,8}.png` and the 44 s clip `20261102-gc1-states.mkv`.
+
+**Order of the launches:**
+1. gc1 on the new title (`ps4-wine-0a8ddb7+dirty.pkg`, with Wine's icon). Done: PASS.
+2. The port with gc1's findings: `build.sh wine --skip-host` + `runtime.sh --prx-only`.
+3. gc2.
+4. g1m, g1, e.
+5. Bloodlines (`gc` + `g2`), then character creation.
+
+**Not tested by these steps:**
+- a cursor larger than 64x64 (it is cut);
+- a swapchain smaller than the desktop (host test only);
+- the cursor across a suspend;
+- the second cursor index;
+- `SetHotSpot` and `2xMagnify`.
+
+**Next session, in order** (as written at 02:35):
 1. **The cursor over Vulkan frames (blocking).** Fork patch 0740 (win32u) hands the cursor to libvulkan.prx's
    `pw_videoout_cursor` after each present; the PS5's libvulkan.prx has it (`wine/ps5/pw_vulkan_radv.c:33`, VideoOut's
    hardware cursor), the Orbis one (`wine/orbis/pw_vulkan_radv_orbis.c`) does not, so win32u's `dlsym` finds nothing.

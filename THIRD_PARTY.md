@@ -64,6 +64,7 @@ machine for anyone else:
 
 | Component | Version | Licence | Source |
 |---|---|---|---|
+| Wine's logo, `assets/icon0.png`: `dlls/user32/resources/oic_winlogo.ico`'s 256x256 PNG entry (stream 7), scaled to 448x448 and centred on white 512x512, rgb24 (the ffmpeg line is in `scripts/ps4/pkg.sh`) | Wine `490f6d5` | LGPL-2.1-or-later | `sce_sys/icon0.png` of every package `pkg.sh` builds (title, probe, triangle) unless `--icon` names another |
 | OpenOrbis `sce_module/libc.prx`, `libSceFios2.prx`, `sce_sys/about/right.sprx` | v0.5.4 | GPL-3.0 (OpenOrbis samples) | toolchain release asset `toolchain-llvm-18.tar.gz`, sha256 `3c7cd5bb593ca74fa1c13fd59f3938dc0fc07985167f7275063019e63abe4526` |
 | OpenOrbis `crt1.o`, `link.x`, `libc.a` (musl), `libc++` | v0.5.4 | MIT (musl crt), GPL-3.0 (`link.x`), Apache-2.0 with LLVM exception (libc++) | linked into the probe's `eboot.bin` |
 | orbis-compat `liborbis-compat.a` members, `crt/crtlib.o` (+ `patches/orbis-compat/0001` from p6 on) | `6922a7b` | MIT | linked into the probe and `probe_mod.prx` |

@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first gc launch (format of logs.sh: HH:MM:SS N|K text)
+03:30:00 N PS4WINE gc2 vkcursor present=ok frames=900 gpu_hang=0 swapchain=1920x1080 reopen=ok cursor_export=ok cursor_shows=960 cursor_reopen_shows=360 cursor_hides=300 cursor_noout=1 cursor_errors=0 cursor_rc=0 vk_cursor_updates=2 vk_cursor_rc=0 vk_cursor_format=0 fb_cursor=00ffff release=ok hello=ok build=abc1234+dirty stages=6/6 stopped=- launches=1 resumed=- session_s=40

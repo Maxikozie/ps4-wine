@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first gc launch (format of logs.sh: HH:MM:SS N|K text)
+03:40:00 N PS4WINE gc vtmb menu=1 cursor_stats=ok cursor_calls=5400 cursor_shows=5390 cursor_updates=3 cursor_hides=0 cursor_noout=10 cursor_errors=0 cursor_rc=0 cursor_at=960,540 cursor_output=1 cursor_format=0 faults_unresolved=0 exit=running build=abc1234+dirty stages=4/5 stopped=- launches=1 resumed=- session_s=95
