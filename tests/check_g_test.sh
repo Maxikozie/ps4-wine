@@ -6,7 +6,7 @@ usage() {
     cat <<USAGE
 usage: tests/check_g_test.sh
 
-Runs scripts/ps4/check.sh g1n, g1m, g1, g2, gc1, gc2, gc, g and gseg on tests/fixtures/g*.log (synthetic: written before
+Runs scripts/ps4/check.sh g1n, g1m, g1, g2, gc1, gc2, gc, gpad, g and gseg on tests/fixtures/g*.log (synthetic: written before
 the first g launch, docs/ps4/HANDOFF-g.md): wow32.exe's checks on the native CPU pass and on the translator
 fail; vk32.exe's placed maps pass and a refused one fails; d3d9tri32.exe with batching passes and without
 fails; the menu mark passes and a crash before it fails; g passes with the mark, 300 s, 24.7 fps and 1180
@@ -16,8 +16,10 @@ g1m and g1 are the e and f checks' (--no-shot here). The cursor's (written 2026-
 launch): gc1 passes with the four calls at 0 over an HDMI frame (made here with ffmpeg) showing test image A's
 white and black quadrants, and fails on a refused enable and on a frame without the cursor; gc2 passes with
 the export, both swapchains and image A in order over cyan, and fails without the export and on a frame
-with red and blue swapped; gc passes with shows at the menu and fails without the export. Exit 0 when every
-case matches.
+with red and blue swapped; gc passes with shows at the menu and fails without the export. gpad (written 2026-11-02 before its first launch) takes
+the last of plan g's pad lines: it passes with the stick, the walk key and the layer used (an earlier line of
+zeros in the same log is not the one read), and fails when the USB keyboard answered and on a stuck key.
+Exit 0 when every case matches.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; "") ;; *) usage; exit 1 ;; esac
@@ -75,6 +77,9 @@ case_ gc2  gc2-noexport.log      1 FAIL  "cursor_export=none != ok" --shot "$TMP
 case_ gc2  gc2-pass.log          1 FAIL  "pixel 944,556" --shot "$TMP/gc2-swapped.png"
 case_ gc   gc-pass.log           0 PASS  "cursor_shows=5390"
 case_ gc   gc-nocursor.log       1 FAIL  "cursor_shows=- < 1"
+case_ gpad gpad-pass.log         0 PASS  "layer_keys=3"
+case_ gpad gpad-keyboard.log     1 FAIL  "kbm=18 != 0"
+case_ gpad gpad-stuck.log        1 FAIL  "stuck=1 != 0"
 
 if [ "$fails" -ne 0 ]; then echo "check_g_test: $fails failure(s)"; exit 1; fi
 echo "check_g_test: all passed"

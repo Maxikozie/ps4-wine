@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first gpad launch (format of logs.sh: HH:MM:SS N|K text)
+05:05:00 N PS4WINE gpad vtmb stick_keys=212 walk_s=38 layer_keys=0 taps=14 holds=2 toggles=2 chords=0 stuck=0 lost=0 kbm=18 pad=4100 marks=1 faults_unresolved=0 build=abc1234+dirty stages=4/5 stopped=- launches=1 resumed=- session_s=359

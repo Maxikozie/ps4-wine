@@ -1,36 +1,77 @@
-; Bloodlines on the DS4, the fallback to a USB keyboard and mouse (milestone g, docs/ps4/HANDOFF-g.md).
-; The keys are the game's own: C:\VTMB\Unofficial_Patch\cfg\default.cfg (UP 11.5; the console has no
-; config.cfg, so these are the binds the game runs with).
-;   d-pad      W A S D          +forward +moveleft +back +moveright (no stick can send keys before
-;                               upstream prospero-win #736, which is after our pin)
-;   right stick                 the mouse: look, and the menu cursor
-;   r2 / l2    mouse buttons    MOUSE1 +attack, MOUSE2 vm_discipline (cast the selected discipline)
-;   cross      space            +jump
-;   circle     e                +use
-;   l1         ctrl             +duck
-;   r1         r                +reload
-;   r3         f                vm_feed
-;   l3         [                invnext, the same command as MWHEELDOWN: the next item on the selected
-;                               side (t, toggleuiside, switches weapons/disciplines; not bound here)
-;   options    escape           cancelselect: the game's menu, which also saves (F9 "save quick" has no
-;                               button left)
-; Not on the pad until #736 frees the d-pad: ] invprev (MWHEELUP), TAB +wpn_secondaryatk (block/alt-fire),
-; h holster, F9 save quick. create (Share) stays unbound: the PS4 system takes it for its share menu.
-; The touchpad, square and triangle are the title's marks and are never bound.
+; Bloodlines on the DS4 alone (milestone g's pad step, docs/ps4/HANDOFF-g.md), a Fallout 3/NV-based layout
+; with an L1 layer for dialogue; the USB keyboard and mouse still work beside it.
+; The keys are the game's own: C:\VTMB\Unofficial_Patch\cfg\default.cfg (UP 11.5).
+; Laid out from public layouts' facts (the VampireGamepad mod: a modifier for 1-8, R3 togglecamera, block on
+; a trigger; SteamInputDB's "Mega Control": analog walk/run, dialogue on a shift layer; Fallout 3/NV: A use,
+; X reload/hold holster, Y jump, L3 sneak, R3 camera); no file of theirs is used.
+;
+;   left stick   W A S D         +forward +moveleft +back +moveright; a light push also holds shift (+speed,
+;                                walk), a full push (past 80%) runs
+;   right stick                  the mouse: look, and the menu pointer
+;   r2           mouse_left      +attack (and click in menus)
+;   l2           tab             +wpn_secondaryatk: block or alt fire, held while held
+;   r1           mouse_right     vm_discipline: cast the selected discipline
+;   l1                           the layer (below); sends nothing itself
+;   cross        e               +use (talk, open, pick up)
+;   triangle     space           +jump
+;   square       r / h           tap: +reload; held 350 ms: holster
+;   circle       i / c           tap: slot6 (inventory); held: +chareditor (character sheet)
+;   l3           ctrl            +duck as a latch: one press crouches (sneaks), the next stands up
+;   r3           z               togglecamera, 1st/3rd person. The game forces 3rd person with melee weapons
+;                                and fists; z switches back only with a ranged weapon out or holstered
+;   up           f               vm_feed
+;   down         t               toggleuiside: the weapons side or the disciplines side
+;   left/right   ] / [           invprev / invnext on that side
+;   options      escape          cancelselect: the game's menu (it also saves)
+;   touchpad                     the title's marks: a tap marks; with square or triangle, a segment
+;
+; Held L1:
+;   cross circle square triangle   1 2 3 4   dialogue answers, and the quick slots (vhotkey) in play
+;   up right down left             5 6 7 8   the same past 4
+;   r1                             9
+;   options      l               +questlog
+;   r3           f9              save quick
+;   l3           f8              vdiscipline_endall
+;   l2           ctrl+c          the terminal hack
+;   anything else keeps its own binding (R2 still attacks with L1 held).
+; create (Share) stays unbound: the PS4 system takes it for its share menu.
 [input]
 mode = keyboard
 mouse = right_stick
 mouse_speed = 600
-up = w
-down = s
-left = a
-right = d
-cross = space
-circle = e
-l1 = ctrl
-r1 = r
+keyboard_stick = left_stick
+stick_deadzone = 25
+stick_walk = shift
+stick_run = 80
+layer = l1
+l1 = none
 r2 = mouse_left
-l2 = mouse_right
+l2 = tab
+r1 = mouse_right
+cross = e
+triangle = space
+square = r
+square.hold = h
+circle = i
+circle.hold = c
+hold_ms = 350
+l3 = toggle:ctrl
+r3 = z
+up = f
+down = t
+left = rbracket
+right = lbracket
 options = escape
-r3 = f
-l3 = lbracket
+l1+cross = 1
+l1+circle = 2
+l1+square = 3
+l1+triangle = 4
+l1+up = 5
+l1+right = 6
+l1+down = 7
+l1+left = 8
+l1+r1 = 9
+l1+options = l
+l1+r3 = f9
+l1+l3 = f8
+l1+l2 = ctrl+c

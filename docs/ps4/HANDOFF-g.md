@@ -3,7 +3,43 @@
 Written 2026-11-01, after phase p (repo `fbd6853`). Read `CLAUDE.md`, then this, then `MILESTONES.md` (the g row
 and note), `HANDOFF-p.md` ("Resume here") and `HANDOFF-f.md` ("Games on the host", the PE image table).
 
-## Resume here (2026-11-02 02:35: Bloodlines reaches its menu with sound (g2 PASS); blocked at character creation by input)
+## Resume here (2026-11-02 04:40: the pointer over DXVK and the DS4 alone in play; gpad owes the L1 layer)
+
+**State at the end of 2026-11-02's session (LOG.md 03:25-04:37):**
+
+| Step | Result |
+|---|---|
+| Icon | Wine's logo in every package (`assets/icon0.png`, `pkg.sh` default) |
+| gc1 | **PASS** |
+| gc2 | **PASS** (the cursor port in libvulkan.prx) |
+| g1m, g1, e | **PASS** on that runtime: the runtime on the console now, `runtime.sh --prx-only` 03:27 |
+| gc (L14) | **PASS**: the pointer over Bloodlines' menus; g2 again; first gameplay (Jack's tutorial, ~55 fps), from a save |
+| gpad (L15) | **FAIL by its rule only on `layer_keys=0`**, with title `ps4-wine-c76b600+dirty.pkg` (installed) |
+
+L15 in detail:
+- **Worked:** walking and running with the left stick, the taps, the crouch latch. Nothing stuck, no keyboard.
+- **The user's verdict:** "perfect".
+- **Owed:** no L1 binding was used before the line, and the 3rd-person HDMI frame was not taken.
+
+**Next session, in order:**
+1. **Finish gpad.** Launch Bloodlines, answer a dialogue with L1 + a face button, and switch to 3rd person with a
+   ranged weapon out or holstered. Then `check.sh gpad` on the last gpad line, with the HDMI frame. Nothing to
+   build: the title and preset are on the console.
+2. **g itself.** New game and character creation with the DS4, then the touchpad mark in the first map. The window
+   bug is fixed in c76b600+dirty.
+3. **Notes**, still open:
+   - the USB mouse research;
+   - the PS-button suspend kill (`0xa0d0c00a`: after it, check `/data/ps4-wine/g/progress.txt`);
+   - audio cutouts during the movies;
+   - load time (~100 s for the first map);
+   - typing on terminals (needs an on-screen keyboard);
+   - whether the game hides the cursor in gameplay and dialogue (no end-of-session counters yet: every session so
+     far ended by suspend).
+
+**Console now:** `env.txt` = `PS4WINE_MILESTONE=g`, `PS4WINE_AUDIO=on`, `WINEDEBUG=+loaddll`. `profiles/vtmb.ini` and
+the new `input/vtmb.input` are pushed.
+
+## Earlier: 2026-11-02 02:35 (Bloodlines reaches its menu with sound (g2 PASS); blocked at character creation by input)
 
 **Where it stands.** Bloodlines (UP 11.5) starts on the PS4, plays its intro movies with sound and shows its main menu
 at 1920x1080 through DXVK at 60 Hz (g2 PASS twice: L12, L13). New Game reaches character creation, and there it
@@ -46,6 +82,52 @@ window (the second mark in the first map) was never reached.
   mouse_count`; the mouse reader logs `sceMouseRead`'s results, halves a refused count and reopens per device after
   ~1 min of empty merged reads; `threads_live` reads correctly.
 - **check.sh:** with no PS4WINE line, MESA `info:` lines no longer count as a crash.
+
+**The pad step, 2026-11-02 04:00: Bloodlines on the DS4 alone.** In L14 the cursor step passed (gc, and g2
+again) and the user reached Jack's tutorial from a save. The DS4 still could not walk with a stick (WASD on the
+d-pad) or answer dialogue (number keys: the USB keyboard's `1`), and square and triangle were still the title's
+segment marks (one opened by accident). So the title gets a pad mapper:
+- **Fork changes** (title-only: no runtime change, no g1m/g1/e reruns):
+  - upstream #736's `keyboard_stick`, ported, plus `stick_walk`/`stick_run`;
+  - an L1 layer (`layer`, `<layer>+<button>`);
+  - tap/hold (`<button>.hold`, `hold_ms`);
+  - latches (`toggle:<key>`) and chords (`ctrl+c`);
+  - all in `pw_wine_pad_map_step` (`native/pw_wine_display.c`), host-tested with a 10k-step fuzz against a shadow
+    keyboard.
+- **Shared keys are counted.** A latched ctrl survives a ctrl+c chord, and the walk shift survives a shift chord.
+- **The touchpad keeps the marks.** A tap marks, on the release. Touchpad + square starts the interior segment and
+  touchpad + triangle the hub segment, and those presses never reach the game.
+- **Also fixed: the g window ended as it began.** In L14 the second mark emitted `PS4WINE g` at once with
+  `window_s=0`. `g_script`'s `now`, read at the top of the loop, was older than the `g_window_ns` its own mark had
+  just stamped, so the uint64 difference wrapped.
+
+| Button | Action | With L1 held |
+|---|---|---|
+| Left stick | WASD; a light push also holds shift (walk), past 80% runs | |
+| Right stick | the mouse: look and the pointer | |
+| R2 / L2 / R1 | attack (mouse_left) / block (tab, held) / cast discipline (mouse_right) | R2 still attacks / ctrl+c (hack) / 9 |
+| Cross / Triangle | use (e) / jump (space) | 1 / 4 |
+| Square | tap reload (r), hold holster (h) | 3 |
+| Circle | tap inventory (i), hold character sheet (c) | 2 |
+| L3 / R3 | crouch latch (toggle:ctrl) / 1st-3rd person (z) | f8 end disciplines / f9 quick save |
+| D-pad up/down/left/right | feed (f) / weapons↔disciplines (t) / previous (]) / next ([) | 5 / 7 / 8 / 6 |
+| Options | escape (menu) | l (quest log) |
+| Touchpad | marks (tap); + square/triangle: segments | |
+
+**Rule `check.sh gpad`, fixed before its first run.** It reads plan g's last `PS4WINE gpad vtmb` line, which comes
+every 60 s with the mapper's cumulative counters.
+- **Gate:** `stick_keys>=4 walk_s>=1 layer_keys>=1 stuck=0 kbm=0 faults_unresolved=0`.
+- **Evidence:** the user's word that they walked and ran with the stick, answered Jack with L1 + a face button and
+  switched perspective with R3, plus an HDMI frame of 3rd person. That frame needs a ranged weapon out or the
+  weapon holstered: with melee or fists the game forces 3rd person and z does nothing.
+
+**Not tested:**
+- dialogue past 9 answers;
+- whether the game drops crouch across a level load while the latch holds ctrl. If it does, the fix is plain
+  hold-to-crouch on L3;
+- hold timing under load stutter.
+
+Taps fire on the release, then stay held 20 ms.
 
 **The input step, started 2026-11-02 03:00: the cursor first, then the USB mouse research.**
 

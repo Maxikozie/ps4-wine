@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -88,6 +88,13 @@ and blue in order) and 976,556 = 0,255,255 (alpha 0 shows the frame); gc Bloodli
 pointer (the line beside g2 at the first mark): menu=1, cursor_shows >= 1, cursor_errors=0, no unresolved
 fault, exit=running; its HDMI frame is evidence, not checked (the pointer is where the user left it).
 The cursor is VideoOut's plane, not part of the frame, so gc1 and gc2 are HDMI only (--fb is refused).
+gpad, the DS4 alone in Bloodlines (fixed 2026-11-02 before its first run): plan g's last "PS4WINE gpad vtmb" line
+(every 60 s, the pad mapper's cumulative counters): the left stick pressed direction keys (stick_keys >= 4),
+walked with shift for at least a second (walk_s >= 1), the L1 layer sent a key (layer_keys >= 1), no key was
+found stuck, the USB keyboard and mouse were not used (kbm=0), no unresolved fault. Evidence, not gated: the
+user's word that they walked and ran with the stick, answered Jack with L1 + a face button and switched
+perspective with R3, and an HDMI frame of 3rd person (taken with a ranged weapon out or holstered: with melee
+or fists the game forces 3rd person and R3's z does nothing).
 p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix.h): stretches of grains in
 which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
@@ -112,7 +119,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -153,7 +160,7 @@ if [ -z "$LINE" ]; then
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
-          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] ]]; then
+          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -307,6 +314,9 @@ case "$MS" in
     # gc: Bloodlines' menu at the first mark, the pointer over DXVK's frames; the HDMI frame is evidence only.
     gc) word vtmb; req menu eq 1; req cursor_shows ge 1; req cursor_errors eq 0; req faults_unresolved eq 0
         req exit eq running ;;
+    # gpad: the DS4 alone (docs/ps4/HANDOFF-g.md), fixed 2026-11-02 before its first run.
+    gpad) word vtmb; req stick_keys ge 4; req walk_s ge 1; req layer_keys ge 1; req stuck eq 0; req kbm eq 0
+          req faults_unresolved eq 0 ;;
     # gseg: a 60 s interior or hub segment: recorded, so only the fields are checked.
     gseg) word vtmb; req seg in int,hub
           for k in fps_avg presents window_s crossings_per_frame frame_us_avg frame_us_p95 seg_inputs flex_mib; do
