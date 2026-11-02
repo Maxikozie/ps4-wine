@@ -3,86 +3,102 @@
 Written 2026-11-01, after phase p (repo `fbd6853`). Read `CLAUDE.md`, then this, then `MILESTONES.md` (the g row
 and note), `HANDOFF-p.md` ("Resume here") and `HANDOFF-f.md` ("Games on the host", the PE image table).
 
-## Resume here (2026-11-02 00:55: g1n, g1m and g1 PASSED; next L4, e's 64-bit regression, then L5 Bloodlines)
+## Resume here (2026-11-02 02:35: Bloodlines reaches its menu with sound (g2 PASS); blocked at character creation by input)
 
-**Console results (LOG.md 00:20-00:54; one package `ps4-wine-d3e3119+dirty-g1.pkg`):**
+**Where it stands.** Bloodlines (UP 11.5) starts on the PS4, plays its intro movies with sound and shows its main menu
+at 1920x1080 through DXVK at 60 Hz (g2 PASS twice: L12, L13). New Game reaches character creation, and there it
+stops: no cursor is drawn over DXVK's frames, so the pad pointer moves blind, and the USB mouse gives no data. The g
+window (the second mark in the first map) was never reached.
+
+**Console launches since the last handoff (LOG.md 00:43-02:32):**
 
 | Launch | Result |
 |---|---|
-| L1 g1n | **PASS.** `wow32.exe` on the native CPU: SEH, x87/SSE2, second thread ok, `native_caps=7`. g runs on the native CPU |
-| L2 g1m | FAIL: `vkMapMemory` -> -1, no alias made or refused |
-| L3 g1 | FAIL, the same cause: DXVK's `Failed to map Vulkan memory` (4 MiB), `CreateVertexBuffer` -> `D3DERR_INVALIDCALL` |
-| L4 g1m (trace) | FAIL as L2, with `+vulkan`: the cause found (below) |
-| L5 g1m | **PASS (framebuffer)** on the fixed runtime: `BO 9 (16 KiB) placed at 0x3000000`, 330 frames, red with the green square the GPU copied from the 32-bit program's mapping |
-| L6 g1 | **PASS (framebuffer)**, the same runtime: DXVK x32 d3d9, 600 frames, `ms_avg=19.4`, `px_c=ffff00 px_m=00ff00`, three placed aliases (4 MiB GARLIC, 16 MiB, 8 MiB; 28 MiB live), `batch=1 crossings_per_frame=16` |
+| g1m trace (00:43) | the -1's cause: RADV advertised `VK_EXT_map_memory_placed` only with KMS/DRM |
+| g1m, g1, e (00:51-00:59) | **PASS** with mesa-ps4 0003 advertising the extension on `__PS4__` |
+| L5 Bloodlines (01:16) | FAIL: "Failed to load the loader DLL: No access to memory location" (the UP's `loader.dll`) |
+| trace (01:21) | the same; cause found on the host (below) |
+| g1m, g1, e (01:48-01:54) | **PASS** on the runtime with fork patches 1120 and 1130: **the runtime every later launch ran on** |
+| L10 (02:02) | past the loader; black menu: 800x600 swapchain refused by VideoOut (`0x80290005`, INVALID_RESOLUTION) |
+| L11 (02:05) | no game: the stage tracker resumed L10's open stage as a crash |
+| L12 (02:13) | **g2 PASS**: the main menu (ResPatch 1920x1080); silent (plan g had no audio stage) |
+| L13 (02:32) | **g2 PASS with sound** (new title); character creation reached; blocked: no cursor, no mouse data |
 
-**The cause of the -1 (fixed).** mesa-ps4 1a59cc1 advertises `VK_EXT_map_memory_placed` only under
-`MESA_SYSTEM_HAS_KMS_DRM` (`radv_physical_device.c`; its comment explains why the no-DRM arm could not keep the
-promise). So win32u's placed check failed, and `map_placed_align` stayed 0. win32u then mapped without a placed
-address, got RADV's own mapping in the arena above 4 GiB and refused it:
-`fixme:vulkan:win32u_vkMapMemory2KHR returned mapping 0x88... does not fit 32-bit pointer`. 0003's alias was
-unreachable.
-- **The handoff before this one was wrong** to say L3 had no such FIXME: L3's log has it (`0x886a00000`).
-- **L4's trace ruled out the rest:** `zero_bits` was set (the host instance got
-  `VK_KHR_external_memory_capabilities`, which win32u adds only for WoW64), and the device had `VK_KHR_map_memory2`.
-- **The fix is in `patches/mesa-ps4/0003`**, not in a new patch: it now also advertises the extension on
-  `__PS4__` (0003's alias and its unmap-to-reservation are what the comment said was missing), and its header no
-  longer claims RADV advertised it.
-- **No alignment change needed.** The SDK libc's `sysconf(_SC_PAGESIZE)` and `getpagesize()` both return 16384
-  (disassembled), so `minPlacedMemoryMapAlignment` is the 16 KiB page the alias requires.
-- **Netlog loss under `+vulkan`:** 740 of 1495 records arrived. Keep `+vulkan` for short runs only.
+**Fixed this session:**
+- **mesa-ps4 0003** also advertises `VK_EXT_map_memory_placed` on `__PS4__` (it was under `MESA_SYSTEM_HAS_KMS_DRM`), so
+  win32u takes the placed path: 32-bit maps work (vk32, d3d9tri32, Bloodlines). The SDK libc's `sysconf` and
+  `getpagesize` both give 16384, so the advertised alignment is right.
+- **Fork patch 1120** (`ntdll: clear decommitted pages beside a read-only page`) and **1130** (`ntdll: keep a hot host
+  page whole beside a read-only page`): two faults in prospero-win's patch 0974 with 16 KiB host pages. The UP's
+  `loader.dll` maps a module itself, makes one page read-only and decommits/fills the pages beside it. Wine's own
+  decommit memset faulted on the read-only neighbour (1120), and after 256 stepped writes 0974 reported a fake write to
+  the read-only page, which the loader took for a real access violation (1130). Reproduced and verified on the host
+  with `WINE_HOST_PAGE_SIZE=16384`; `tests/wine_subpage_protect.c` covers both. Upstream #739 (0986) does not fix it.
+  Cost of 1130: while a host page is kept whole, a write to its read-only page is not seen (emulators that watch code
+  pages lose that fault).
+- **Console data:** the prefix's `HKCU\Software\Troika\Vampire\ResPatch` set to 1920x1080 by hand (the game wrote its
+  800x600 default on the first run; backup of the old file in the session scratchpad); `profiles/input/vtmb.input`
+  rewritten from the game's `default.cfg` (R3 feed `f`, L3 `[` = invnext; the old R3 sent F5 = `slot4`;
+  `mouse_speed` 600); `profiles/vtmb.ini` `show_fps = true` (DXVK's HUD from the next launch: its cost is in every g
+  number from then on).
+- **Title** (`ps4-wine-b0d5f17+dirty.pkg`, installed): plan g opens the audio port as p5 does (`PS4WINE_AUDIO=off`
+  turns it off); the g line has `audio grains grains_nonzero audio_errors mouse_reads mouse_records mouse_rc
+  mouse_count`; the mouse reader logs `sceMouseRead`'s results, halves a refused count and reopens per device after
+  ~1 min of empty merged reads; `threads_live` reads correctly.
+- **check.sh:** with no PS4WINE line, MESA `info:` lines no longer count as a crash.
 
-**The runtime that passed g1 (L6) is the one L5 Bloodlines runs on** (the user's rule): the fork at `b0d5f17`,
-mesa-ps4 1a59cc1 with 0001-0003 as now in the repo, built by `build.sh mesa --prx` and `build.sh wine --skip-host`,
-and uploaded by `runtime.sh --prx-only` at 00:44. Do not rebuild a PRX before L5. A title-only change (a reinstall)
-is allowed for L5.
+**Next session, in order:**
+1. **The cursor over Vulkan frames (blocking).** Fork patch 0740 (win32u) hands the cursor to libvulkan.prx's
+   `pw_videoout_cursor` after each present; the PS5's libvulkan.prx has it (`wine/ps5/pw_vulkan_radv.c:33`, VideoOut's
+   hardware cursor), the Orbis one (`wine/orbis/pw_vulkan_radv_orbis.c`) does not, so win32u's `dlsym` finds nothing.
+   The PS4 SDK stub has `sceVideoOutCursorEnable/Disable/SetImageAddress/SetPosition`. Port it; it needs the WSI's
+   VideoOut handle (mesa-ps4 `wsi_orbis.c`) and GPU-visible memory for the image. A runtime change: g1m, g1 and e
+   again before Bloodlines.
+2. **The USB mouse:** `sceMouseRead` returns 0 records on every read, merged (`open=0x2f0700`) and per device
+   (`open=0x300700`), never an error; the keyboard reads fine; the system shows the mouse as connected. The only other
+   PS4 notes (ps4-mesa-docs' RetroArch port) never called past `sceMouseInit`. To research: `sceMouseOpen`'s type/index
+   arguments and param layout on the PS4, the read's record layout, any focus/privilege call.
+3. **The PS button kills the title:** suspending it ends in `0xa0d0c00a` (CPU_FAULT_SUBMITDONE_TIMEOUT_IN_SUSPEND_ASYNC);
+   the next launch then spends itself resuming the open stage as a crash. Until fixed: after a PS-button close,
+   `rm /data/ps4-wine/g/progress.txt` over FTP. The fix is the title's (answer the suspend, or SubmitDone).
+4. **Audio cutouts** when the pad pointer moves during the intro movies (the movies take Wine's desktop path; each
+   pointer move redraws the desktop: unmeasured). Add the driver's `underruns` to the g line.
+5. **Load time:** ~60 s from `Vampire.exe` to the first menu present (DLLs 8 s; movies, data and DXVK's first pipelines
+   not separated: the per-thread census is off on this firmware).
+6. **Pad:** Cross is jump, so menus need R2; porting upstream #736 (`keyboard_stick`, title-only: `src/pw_game_profile`,
+   `native/pw_wine_display`, the two Orbis pad loops, ~45 min with tests) frees the d-pad for holster, quicksave,
+   block and previous.
+7. **The WSI's fallback buffers** at the display's size (a game asking 800x600 still gets a black screen): not blocking
+   while ResPatch says 1920x1080.
 
-**Next session:**
-1. **L4 of the plan: `PS4WINE_MILESTONE=e`**, the 64-bit regression on this runtime. RADV now advertises
-   `VK_EXT_map_memory_placed` to 64-bit processes too. win32u does not use it there (`zero_bits` is 0), but DXVK
-   sees the device extension list.
-2. **L5: Bloodlines** (`PS4WINE_MILESTONE=g`, `WINEDEBUG=+loaddll`), with a title rebuilt for the `threads_live`
-   fix (`build.sh title`, reinstall). `game.sh --saves-push` first if a save is wanted.
-3. **Not yet tested anywhere:** a placed alias going back to a reservation (unmap or free: no `restored` line in
-   L5/L6, since both kept their memory to exit). Bloodlines will free chunks; watch for `orbis-drm: placed alias ...
-   restored` and `could not be restored`.
+**The user's rules (2026-11-02):**
+- A runtime change (PRXs, mesa-ps4, orbis-compat) is followed by g1m, g1 and e on it before any Bloodlines launch; a
+  title-only reinstall is allowed.
+- No mesa-ps4 0004 (GPU busy) and no orbis-compat 0002 (RADV stack knob) yet; their g fields stay `-`.
+- The user plays Bloodlines on the laptop from `build/host-game/vtmb` (prefix `build/prefix-desktop`): host tests run
+  `Vampire.exe` only from the reflink copy `build/host-test/vtmb` with their own prefix, and never wait on or stop
+  processes by name.
 
-**The user's rules for g (2026-11-02):**
-- No mesa-ps4 0004 (GPU busy) and no orbis-compat 0002 (RADV stack knob) before the Bloodlines launch: 0004
-  touches the submit path g1 tests. Their fields stay `-` in g.
-- L5 runs on exactly the runtime (PRXs, mesa-ps4, orbis-compat) that g1 validates.
+**On the console:** Bloodlines, `profiles/vtmb.ini` (show_fps true) and `input/vtmb.input` (mouse_speed 600), the
+runtime of 01:43, the title `ps4-wine-b0d5f17+dirty.pkg`, the prefix with ResPatch 1920x1080 and `config.cfg` equal to
+`default.cfg`, `env.txt` = `PS4WINE_MILESTONE=g`, `PS4WINE_AUDIO=on`, `WINEDEBUG=+loaddll`; `/data/ps4-wine/g/progress.txt`
+removed (the next launch starts a fresh cycle).
 
-**Recorded-only findings:**
-- **Per-thread census:** `sysctl(KERN_PROC_PID|KERN_PROC_INC_THREAD)` gives `ENOENT` on this firmware, so it stays
-  off (`-` in g). `getrusage(RUSAGE_THREAD)` works on the calling thread.
-- **`threads_live` printed garbage** in L1-L6: the title read Wine's 32-bit `LONG` as 64 bits. The fix is in the
-  fork (`live_thread_fields`, `int32_t`, committed in `b0d5f17`), not in the installed package. It goes into L5's
-  title.
-- **libvulkan's threads** were all raised to the 16384 KiB floor (L3: 7, L6: 8). Free flexible memory went 429 ->
-  232 MiB in L6.
-- **FTP returns `.prx` files decrypted** and not byte-equal to the `.oelf` (a control, `ws2_32.prx`, differs in
-  311K of 1.2 MB). To see whether an upload landed, use the listing's time (`cls -l --time-style=full-iso`; the
-  console's clock runs ~8 min ahead), not a hash.
+**Recorded-only findings:** the netlog loses about half its records under `+vulkan` or `+virtual` (use the host for
+traces); FTP returns `.prx` files decrypted (compare upload times, not hashes); libvulkan's own pthread layer still
+raises RADV's threads to its 16 MiB floor (6-9 threads, 96-144 MiB of flexible memory; free flexible memory fell to
+152 MiB at character creation in L13); `check.sh` takes a klog `0xa0d0c00a` from an earlier, idling title for this
+launch's crash when the log starts before the close (trim the log to the launch, as L10's line says).
 
-**Host side:**
-- The desktop Wine works. The user played Bloodlines through the tutorial.
-- Saves are in `build/saves/vtmb` (`Vampire-001.sav`, 00:10, the tutorial: the interior save). No hub save yet.
-- `game.sh --saves-push` puts them on the console.
-- lavapipe (Mesa 26.0.8) offers no `VK_EXT_map_memory_placed`, so the host cannot run the placed path.
+**Upstream boundary, still open:** fork comments and strings that name this repo: `native/orbis/pw_milestone_orbis.{c,h}`,
+`pw_hist.h`, `pw_videoout_orbis.h`, `wine/orbis/pw_vulkan_radv_orbis.{c,h}`, `tests/wine_d3d9tri32.c`,
+`tests/test_wine_d3d9tri32.py`, the Vulkan app name `"ps4-wine e1"` and the console path `/data/ps4-wine/` in
+`wine/wowprospero/unix.c` (functional: renaming moves the console's data). Patches 1080, 1090 and 1110 were reworded.
 
-**On the console:**
-- Bloodlines (20981 files, verified), `profiles/vtmb.ini` and `input/vtmb.input`.
-- L5/L6's runtime.
-- The prefix with DXVK x32 d3d9, `vk32.exe`, `d3d9tri32.exe` and `C:\g1\dxvk.conf`.
-- `env.txt` holds L6's two lines (`g1`).
-
-**The capture stick** stopped delivering frames once (00:12-00:18): `mpv` waited with no window. `view.sh`'s
-`ffmpeg` and `mpv` had to be killed, and the stick replugged. A KWin script over `qdbus6` brings the "PS4" window to
-the current desktop (`build/` has none; it was a scratch file: `workspace.windowList()`, `w.desktops =
-[workspace.currentDesktop]`, `workspace.activeWindow = w`).
-
-**Uncommitted (the user commits):** repo `patches/mesa-ps4/0003`, docs LOG and HANDOFF-g. The fork is clean
-(`b0d5f17`).
+**Uncommitted (the user commits):**
+- Repo: `docs/ps4/{LOG,HANDOFF-g}.md`, `profiles/vtmb.ini`, `profiles/input/vtmb.input`, `scripts/ps4/check.sh`.
+- Fork: `wine/patches/1120-*`, `1130-*` (new), `1080`, `1090`, `1110` (reworded), `tests/wine_subpage_protect.c`,
+  `native/pw_hid_ps5.{c,h}`, `tests/test_pw_hid_ps5.c`, `native/orbis/pw_milestone_orbis.c`.
 
 ## Does g need a desktop host Wine?
 

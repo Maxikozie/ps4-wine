@@ -1,11 +1,26 @@
-; Bloodlines on the DS4, the fallback to a USB keyboard and mouse (milestone g, docs/ps4/HANDOFF-g.md):
-; the d-pad walks (W A S D), the right stick looks (relative mouse moves), R2/L2 are the mouse buttons,
-; cross jumps, circle uses (E), L1 crouches, R1 reloads, L3 is Shift, R3 quicksaves (F5), options is
-; Escape. The touchpad, square and triangle are the title's marks and are never bound.
+; Bloodlines on the DS4, the fallback to a USB keyboard and mouse (milestone g, docs/ps4/HANDOFF-g.md).
+; The keys are the game's own: C:\VTMB\Unofficial_Patch\cfg\default.cfg (UP 11.5; the console has no
+; config.cfg, so these are the binds the game runs with).
+;   d-pad      W A S D          +forward +moveleft +back +moveright (no stick can send keys before
+;                               upstream prospero-win #736, which is after our pin)
+;   right stick                 the mouse: look, and the menu cursor
+;   r2 / l2    mouse buttons    MOUSE1 +attack, MOUSE2 vm_discipline (cast the selected discipline)
+;   cross      space            +jump
+;   circle     e                +use
+;   l1         ctrl             +duck
+;   r1         r                +reload
+;   r3         f                vm_feed
+;   l3         [                invnext, the same command as MWHEELDOWN: the next item on the selected
+;                               side (t, toggleuiside, switches weapons/disciplines; not bound here)
+;   options    escape           cancelselect: the game's menu, which also saves (F9 "save quick" has no
+;                               button left)
+; Not on the pad until #736 frees the d-pad: ] invprev (MWHEELUP), TAB +wpn_secondaryatk (block/alt-fire),
+; h holster, F9 save quick. create (Share) stays unbound: the PS4 system takes it for its share menu.
+; The touchpad, square and triangle are the title's marks and are never bound.
 [input]
 mode = keyboard
 mouse = right_stick
-mouse_speed = 1600
+mouse_speed = 600
 up = w
 down = s
 left = a
@@ -17,5 +32,5 @@ r1 = r
 r2 = mouse_left
 l2 = mouse_right
 options = escape
-l3 = shift
-r3 = f5
+r3 = f
+l3 = lbracket

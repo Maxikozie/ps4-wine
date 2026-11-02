@@ -131,7 +131,9 @@ LINE="$(grep -E "PS4WINE $MS " "$LOG" | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\
               print line }' || true)"
 emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "$2" "${NOTE:+$NOTE; }$(basename "$LOG")${SHOT:+; $(basename "$SHOT")}"; }
 if [ -z "$LINE" ]; then
-    FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | head -n1 || true)"
+    # RADV's and the winsys's own info lines explain faults without reporting one ("A write fault at
+    # ring+N*32768 is offchip buffer N"), so they are not a crash.
+    FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | grep -v 'MESA: info:' | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
