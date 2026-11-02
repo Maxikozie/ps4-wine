@@ -30,24 +30,29 @@ at the frame rate fixed below (`fps_avg>=30`, `fps_avg<=61`).
   - Psychonauts is not uploaded.
   - Free space on `/data` is unknown: FTP and statfs cannot tell, so the user reads Settings → Storage before k.
 
-**j, 2026-11-02 (host).** The rule passed on session A. The restart check failed, with Wine bug 20834 confirmed, so
-stop point S3 holds. Details are in "j result" under j below.
+**j passed (host), 2026-11-03.**
+- The rule passed on session A (2026-11-02).
+- Wine bug 20834 broke the restart check (stop point S3). Fork Wine patch 0904 fixed it.
+- The restart proof passed in sessions C, D and E: the pad's buttons work after restarts, and the bindings INI is
+  unchanged.
+- Details: "j result" and "The S3 fix" under j below.
 - Built:
   - `host-game.sh --game psychonauts`;
   - the fork's evdev pad shim (`tests/host_pad_evdev.c`);
+  - patch 0904 and its host test (`tests/test_wine_mapvk.py`);
   - `check.sh j` and `tests/check_psy_test.sh`.
 - Not run: j2.
 - Saves are in `C:\Psychonauts\Profiles\Profile 1\`, copied to `build/saves/psychonauts/`.
 
 **Next, in order:**
-1. **The bindings decision (S3),** the user's. Choose one of:
-   - a Wine `MapVirtualKeyEx` patch, tested in j's setup;
-   - psycho_fix's byte on a copy;
-   - Defaults every session.
-
-   Then re-run j's restart check. Also open: rumble not felt, the touchpad udev rule, and j2 on the user's word.
-2. **i1**, the probe. It does not depend on the bindings.
-3. **i**, the title split, with **l1** in the same package.
+1. **i1**, the probe.
+2. **i**, the title split, with **l1** in the same package. The runtime then carries 0904, and its regressions cover
+   it.
+3. **Still open from j:**
+   - rumble not felt;
+   - the touchpad's udev rule;
+   - j2, only on the user's word;
+   - the first-launch name screen needing Enter (planned under l).
 
 **Corrections the research found (applied 2026-11-02):**
 - `ORBIS-WIN.md` F14 and row 16 (B, "Two corrections").
@@ -334,7 +339,7 @@ session_s=` when the game exits. The rule is:
     `build/host-game/psychonauts-writes/<ts>/`.
   - `host-game.sh --parse LOG` prints the fields that come from the log; `check_psy_test.sh` tests that parsing.
 
-**j result (2026-11-02): the rule passes, the restart check fails. Stop point S3 holds: no console upload.**
+**j result (2026-11-02): the rule passes, the restart check fails** (S3, resolved 2026-11-03 by patch 0904 below).
 
 **Session A** (`logs/20261102-172728-host-psychonauts-j.log`, the user's copy, `--debug +keyboard`).
 `check.sh j` gives `PASS (host)`:
@@ -411,6 +416,73 @@ session_s=` when the game exits. The rule is:
 3. **The touchpad (Back and the mark)** needs the user's udev rule; it was untested in A and B.
 4. **j2** (headless, 4 KiB and 16 KiB pages) only on the user's word.
 
+**The S3 fix: fork Wine patch 0904 (the user's choice, option 1, 2026-11-02).**
+`wine/patches/0904-win32u-no-translation-for-scan-codes-above-0xff.patch`.
+- **What it does:** at the top of win32u's `NtUserMapVirtualKeyEx`, before the driver, for `MAPVK_VSC_TO_VK` and
+  `MAPVK_VSC_TO_VK_EX` only: a code whose bits above the low byte are not 0, 0xe000 or 0xe100 returns 0. One hunk
+  covers winex11 (the laptop) and the generic path (the console, where ps5drv has no `MapVirtualKeyEx`).
+- **Why it is not in winex11:**
+  - `X11DRV_GetKeyNameText` (`winex11.drv/keyboard.c:2569-2572`) deliberately calls the driver with 0x1xx codes.
+  - win32u's `map_scan_to_kbd_vkey` (`input.c:1329`, the keyboard input path) calls the driver directly and passes
+    extended keys as 0xe0xx.
+  - Every internal caller of `NtUserMapVirtualKeyEx` asks a VK_TO_* mode or masks to 0xff (`input.c:1396`,
+    `ps5drv.c:607`, `wayland_keyboard.c:683`).
+- **Sources for "Windows returns 0":**
+  - Microsoft's MapVirtualKeyExW page (updated 2025-07-01), for both modes: "If there is no translation, the
+    function returns 0." and "the high byte of the uCode value can contain either 0xe0 or 0xe1 to specify the
+    extended scan code".
+  - Wine's own `user32/tests/input.c:3297-3313` `test_key_map`, which passes on Windows: `0x011d`, `0x021d`, `0x136`,
+    `0x137`, `0x237`, `0x145` → 0 under `_EX`, marked `todo_wine`.
+  - **The game.** `Psychonauts.exe` 0x405b90, the key-name lookup:
+    - it names a code by `vk_names[MapVirtualKeyExA(code, 1, layout)]` when that is nonzero and named;
+    - otherwise by its own table, which holds the Joy names.
+    - psycho_fix's byte (0x4F9F) skips that call. The patch clears those six todos and adds three type-1 rows; the
+      user32 tests were not run (they inject keystrokes into the session).
+- **Host test:** fork `tests/test_wine_mapvk.py` with `mapvk32.exe` (32-bit).
+  - **Before the patch, both trees fail.**
+    - drv (the console's generic path): 39 of 512 codes in 0x100-0x2ff translate, the first being 0x110 → 0xb1.
+    - winex11: 214 of 512, the first being 0x101 → 0x1b (Escape).
+  - **Key names recorded before the patch, required unchanged after it:** extended Right Arrow and Right Ctrl are
+    `Right`/`Right_Ctrl` on drv and `Right`/`Control` on winex11.
+
+**The restart proof, fixed before session C.** Sessions run on the user's copy with `--debug +keyboard` on the rebuilt
+desktop Wine. Each is closed by WM_CLOSE from its desktop when the user says so.
+- **Session C:** Options → Bindings → Defaults, once. The user checks that the pad's buttons work. Then
+  `Profile 1- Raz.ini` is snapshotted, with its pad column recorded.
+- **Sessions D and E:** restarts, no Defaults.
+- **Pass, all of:**
+  - the user's word that the pad's buttons work in D and E without Defaults;
+  - `Profile 1- Raz.ini` byte-identical after C, D and E (`cmp`);
+  - after C, the `*_Alt` entries that held keyboard names in B (`Jump`, `Attack`, `Use`, `Cancel`, `LockOn/Float`,
+    `LookUp`, `LookDown`) hold none;
+  - `mapvk_high=N/0` in C, D and E (`host-game.sh` with `+keyboard`; before the patch, session A gave 62910/62904
+    and B 7676/7667).
+- **On a fail:** stop and report; change nothing else.
+- **Then j passes.** The console gets 0904 with i's package and its regressions.
+
+**The restart proof passed (2026-11-03).** All sessions ran on the rebuilt desktop Wine (0904 in it), on the user's
+copy, with `+keyboard`, and were closed by WM_CLOSE.
+
+| Session | Log | What the user did | INI | `mapvk_high` | User's word |
+|---|---|---|---|---|---|
+| C | `logs/20261103-002505-host-psychonauts-j.log` | Options → Bindings → Defaults, once | written by the game at 00:26:30, inside the session (it started 00:25:05 and exited 00:29:03); snapshot `after-C.ini` | 20116/0 | the pad works |
+| D | `logs/20261103-003111-host-psychonauts-j.log` | restart, no Defaults | byte-identical to C (`cmp`), still written at 00:26:30 | 19168/0 | the buttons worked straight away |
+| E | `logs/20261103-003443-host-psychonauts-j.log` | restart, no Defaults | byte-identical to C | 30818/0 | the buttons worked again |
+
+- **The pad column after C**, where B had keyboard names: `Jump_Alt=Joy2`, `Attack_Alt=Joy1`, `Use_Alt=Joy4`,
+  `Cancel_Alt=Joy3`, `LockOn/Float_Alt=Joy5`, `PsiPower2_Alt=Joy7`, `PsiPower3_Alt=Joy8`, `InventoryMenu_Alt=DPadLeft`,
+  `PsiPowersMenu_Alt=DPadRight`, `FirstPerson_Alt=Joy12`, `Journal_Alt=Joy9`, `Stats_Alt=Joy11`,
+  `LookUp/LookDown_Alt=JoyRotZ`.
+- **The mouse buttons came back too:** `Attack=LeftMouse` and `PsiPower1=RightMouse`, where A had written `1` and
+  `2`. Their codes are above 0xff as well.
+- **The INI was never edited by hand.** Each session wrote only the DXVK cache, apart from C's INI and profile
+  writes.
+- **Snapshots** are in `build/host-game/psychonauts-ini/{before-C,after-C,after-D,after-E}.ini`.
+- **Mono and Gecko in the user's prefix.** The first launch on the rebuilt Wine (C) ran Wine's prefix update through
+  `host-game.sh`'s setup check, which did not disable them, so `build/prefix-desktop-psychonauts` now holds Wine Mono
+  and Gecko. Both setup commands now set `mscoree,mshtml=`. The game uses neither.
+- **Fresh profile** (the test copy, which had no profile before): see "Found in j" under l.
+
 **Not tested:** the console's driver, audio path, pad source and memory. 16 KiB pages only as emulated.
 
 **Stop point S3.** If the game fails on the host for a reason that is not the console's (a crash, no sound, steam_api
@@ -469,6 +541,25 @@ tell).
 **Commit** fork and repo after k passes (the user commits).
 
 ### l: the DS4 in Psychonauts as XInput controller 0
+
+**Found in j (2026-11-03): the first launch needs Enter on the PS4.**
+- The new-profile screen (the bunk bed and the name) takes only Enter and Esc from the keyboard; the pad cannot
+  confirm it. On the PS4, with no keyboard, that blocks a first launch.
+- The pad works elsewhere on a fresh profile: Circle skipped the first dialogue (the user's word, from the
+  fresh-profile check on the test copy). That run wrote no profile file before its 300 s limit, so the INI a fresh
+  profile writes under patch 0904 was not read.
+- **l adds, in xinput mode:** DS4 buttons that also send Enter and Esc for text screens, through the title's key
+  posting (plan g's mapper, which in xinput mode posts key edges beside the pad, as on the PS5:
+  `wine64_main.c:1597-1609`).
+- **Constraints from the INI after Defaults:**
+  - Escape is bound to `Journal` in gameplay. An Esc button must be the button the pad already uses for the Journal
+    (`Journal_Alt=Joy9`), or one with no gameplay use.
+  - Enter is unbound in gameplay (`LockOn/Float_Alt` is `Joy5` after 0904), so Enter can share a confirm button.
+  - Which DS4 button is `Joy9` gets read from the game's Options screen in l.
+- **The bonus idea, not planned:** the PS4 user's name (`sceUserServiceGetUserName`) as Wine's user name, so the
+  name screen fills itself in. It cannot work for this game: `Psychonauts.exe` imports no ADVAPI32 (so no
+  `GetUserNameA`) and has no `USERNAME` string. Its only possible name source is steam_api's `SteamFriends`, which
+  needs Steam. The idea is kept for games that read the Windows user name.
 
 **Changes:**
 - `profiles/psychonauts.ini` `[input] mode = xinput`; the touchpad as in l1.

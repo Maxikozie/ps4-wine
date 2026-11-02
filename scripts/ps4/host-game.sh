@@ -46,6 +46,8 @@ glitches off C:).
               (OpenAL32) that never loaded (listed as dll_absent=). Missing imports of Wine's own modules (its
               Indeo codec ir50_32 wants winegstreamer, which neither this Wine nor the console's has) are
               dll_missing_wine=, recorded, not gated.
+              With --debug +keyboard, mapvk_high=<calls>/<nonzero> counts the game's MapVirtualKeyEx calls
+              with a code above 0xff and the ones answered nonzero (Wine bug 20834; Wine patch 0904 answers 0).
               save_new is 1 when a file under a SavedGame<N> path (any depth, any case) in the game or in the
               prefix's drive_c/users is newer than the session start; pad_reads counts the game's reads of
               controller 0 while it was connected. Each file written (up to 4 MiB) is kept in
@@ -244,8 +246,30 @@ log_fields() {
         "$presents" "$fps_avg" "$crossings"
     printf ' pad_reads=%s pad_calls=%s pad_first_read_ms=%s rumble_events=%s rumble=%s marks=%s' \
         "$(padf connected_reads)" "$(padf reads)" "$(padf first_read_ms)" "$(padf rumble_events)" "$(padf rumble)" "$(padf marks)"
-    printf ' dxvk_conf=%s steam_init=%s\n' \
-        "$(grep -aq 'Found config file' "$log" && echo found || echo -)" "$(grep -aq 'S_API FAIL' "$log" && echo fail || echo -)"
+    printf ' dxvk_conf=%s steam_init=%s mapvk_high=%s\n' \
+        "$(grep -aq 'Found config file' "$log" && echo found || echo -)" "$(grep -aq 'S_API FAIL' "$log" && echo fail || echo -)" \
+        "$(mapvk_high "$log")"
+}
+
+# With +keyboard: the game's MapVirtualKeyEx calls (win32u's entry trace) with a code above 0xff in
+# MAPVK_VSC_TO_VK or _EX, and how many of those reached winex11 and got a nonzero answer (Wine bug 20834;
+# patch 0904 answers them 0 before the driver). winex11's own GetKeyNameText calls are not counted. "-"
+# without the trace.
+mapvk_high() {
+    grep -aE ':trace:keyboard:(NtUserMapVirtualKeyEx code|X11DRV_MapVirtualKeyEx (wCode|returning))' "$1" |
+        awk 'BEGIN { calls = 0; bad = 0; seen = 0 }
+             { split($1, a, ":"); t = a[1] }
+             /NtUserMapVirtualKeyEx code / { seen = 1; code = $3 + 0; type = $5 + 0; pend[t] = 0
+                                              if (code > 255 && (type == 1 || type == 3)) { calls++; want[t] = code } else want[t] = -1
+                                              next }
+             /X11DRV_MapVirtualKeyEx wCode=/ { split($0, w, "wCode="); c = strtonum_hex(w[2])
+                                                pend[t] = (want[t] >= 0 && c == want[t]); want[t] = -1; next }
+             /X11DRV_MapVirtualKeyEx returning / { if (pend[t]) { r = $NF; sub(/\.$/, "", r); if (r != "0x0") bad++ }
+                                                    pend[t] = 0 }
+             function strtonum_hex(s,   i, n, ch) { n = 0; s = tolower(s); sub(/^0x/, "", s)
+                 for (i = 1; i <= length(s); i++) { ch = index("0123456789abcdef", substr(s, i, 1)); if (!ch) break; n = n * 16 + ch - 1 }
+                 return n }
+             END { if (seen) print calls "/" bad; else print "-" }'
 }
 
 if [ -n "$PARSE" ]; then
@@ -285,7 +309,7 @@ fi
 # This Wine has neither SDL nor udev (config.h), so winebus finds no controller anyway; the value records
 # that the pad's only route is the preloaded title pad, as on the console.
 if ! grep -q '"Enable SDL"=dword:00000000' "$PREFIX/system.reg"; then
-    WINEDEBUG=-all "$WINE" reg add 'HKLM\System\CurrentControlSet\Services\winebus' /v 'Enable SDL' /t REG_DWORD /d 0 /f \
+    WINEDLLOVERRIDES="mscoree,mshtml=" WINEDEBUG=-all "$WINE" reg add 'HKLM\System\CurrentControlSet\Services\winebus' /v 'Enable SDL' /t REG_DWORD /d 0 /f \
         >/dev/null 2>&1 || die "reg add winebus Enable SDL failed"
     WINEDEBUG=-all "$WINESERVER" -w || true
 fi
@@ -303,7 +327,7 @@ fi
 cp "$DXVK_CONF" "$GAME/dxvk.conf"
 mkdir -p "$(dirname "$LINK")"
 ln -sfn "$GAME" "$LINK"
-cwd="$(cd "$GAME" && WINEDEBUG=-all "$WINE" cmd /c cd 2>/dev/null | tr -d '\r' | tail -n1)"
+cwd="$(cd "$GAME" && WINEDLLOVERRIDES="mscoree,mshtml=" WINEDEBUG=-all "$WINE" cmd /c cd 2>/dev/null | tr -d '\r' | tail -n1)"
 [ "$cwd" = 'C:\Psychonauts' ] || die "Wine sees $GAME as '$cwd', not C:\\Psychonauts"
 log "prefix: $PREFIX, C:\\Psychonauts = $GAME ($LINK links to it), DXVK $DXVK_VERSION x32 d3d9.dll, dxvk.conf"
 [ "$SETUP_ONLY" = 0 ] || exit 0
@@ -376,7 +400,7 @@ LINE="PS4WINE j psychonauts exe_base=${J[exe_base]} dll_missing=${J[dll_missing]
 LINE+=" pad_reads=${J[pad_reads]} session_s=$session_s fps_avg=${J[fps_avg]} crossings_per_frame=${J[crossings_per_frame]}"
 LINE+=" dll_missing_wine=${J[dll_missing_wine]} dll_absent=${J[dll_absent]} dxvk_conf=${J[dxvk_conf]}"
 LINE+=" steam_init=${J[steam_init]} exit=$status dumps=$dumps pad_calls=${J[pad_calls]} pad_first_read_ms=${J[pad_first_read_ms]}"
-LINE+=" rumble_events=${J[rumble_events]} rumble=${J[rumble]} marks=${J[marks]} test=$TEST"
+LINE+=" rumble_events=${J[rumble_events]} rumble=${J[rumble]} marks=${J[marks]} mapvk_high=${J[mapvk_high]} test=$TEST"
 printf '%s\n' "$LINE" >> "$LOG"
 
 # What the session wrote: the save path and the bindings file show up here. Kept for comparing sessions.

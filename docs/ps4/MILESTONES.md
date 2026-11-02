@@ -216,6 +216,9 @@ first or alongside i1; l1 rides in i's package, so one regression round covers b
 `C:\Psychonauts\Profiles\Profile 1`). The user confirmed menu, gameplay, sound, the save and the load. The bindings
 after a restart failed: Wine bug 20834 writes keyboard names into the pad column of the bindings INI, and after a
 restart the pad's buttons are dead. So j is not passed, and stop point S3 holds (`HANDOFF-i.md`, "j result").
+**j passed, 2026-11-03:** fork Wine patch 0904 makes `MapVirtualKeyEx` answer 0 for codes above 0xff that are not
+E0/E1 scan codes, as Windows documents. After one Defaults, two restarts kept the pad's buttons working and the INI
+byte-identical (`HANDOFF-i.md`, "The restart proof passed").
 
 ## Polish (not gating)
 

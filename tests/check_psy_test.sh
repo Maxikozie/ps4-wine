@@ -13,7 +13,9 @@ the EXE moved to 0x00410000, with a missing DLL, with 3100 presents, after 431 s
 without a pad read; a log whose game crashed before host-game.sh wrote the line is CRASH. host-game.sh --parse
 reads the fields from Wine's output: with every game DLL loaded and only Wine's Indeo codec missing
 winegstreamer, dll_missing=0 and dll_missing_wine=1 (the user's choice, 2026-11-02, after the smoke run); a
-missing import of the EXE and of binkw32 plus OpenAL32 never loaded is dll_missing=3. The fixtures for
+missing import of the EXE and of binkw32 plus OpenAL32 never loaded is dll_missing=3; in a +keyboard trace,
+three MapVirtualKeyEx calls above 0xff of which one reached winex11 with a nonzero answer (winex11's own
+GetKeyNameText call and a plain scan code not counted) is mapvk_high=3/1. The fixtures for
 k, l, m and n join these before their first launches.
 Exit 0 when every case matches.
 USAGE
@@ -58,7 +60,8 @@ parse_() {
     fi
 }
 
-parse_ j-parse-codec.log 600 "exe_base=0x00400000 dll_missing=0 dll_missing_wine=1 dll_absent=- presents=3601 fps_avg=6.0 crossings_per_frame=25 pad_reads=38 pad_calls=40 pad_first_read_ms=232 rumble_events=2 rumble=ok marks=1 dxvk_conf=found steam_init=-"
-parse_ j-parse-gamemiss.log 0 "exe_base=0x00410000 dll_missing=3 dll_missing_wine=0 dll_absent=binkw32,openal32 presents=1 fps_avg=- crossings_per_frame=- pad_reads=- pad_calls=- pad_first_read_ms=- rumble_events=- rumble=- marks=- dxvk_conf=- steam_init=-"
+parse_ j-parse-codec.log 600 "exe_base=0x00400000 dll_missing=0 dll_missing_wine=1 dll_absent=- presents=3601 fps_avg=6.0 crossings_per_frame=25 pad_reads=38 pad_calls=40 pad_first_read_ms=232 rumble_events=2 rumble=ok marks=1 dxvk_conf=found steam_init=- mapvk_high=-"
+parse_ j-parse-gamemiss.log 0 "exe_base=0x00410000 dll_missing=3 dll_missing_wine=0 dll_absent=binkw32,openal32 presents=1 fps_avg=- crossings_per_frame=- pad_reads=- pad_calls=- pad_first_read_ms=- rumble_events=- rumble=- marks=- dxvk_conf=- steam_init=- mapvk_high=-"
+parse_ j-parse-mapvk.log 0 "exe_base=0x00400000 dll_missing=17 dll_missing_wine=0 dll_absent=dinput8,d3d9,d3dx9_40,winmm,dsound,binkw32,isactwin,audiodrv,xinput1_3,steam_api,kernel32,user32,shell32,ole32,oleaut32,msvcr90,openal32 presents=- fps_avg=- crossings_per_frame=- pad_reads=- pad_calls=- pad_first_read_ms=- rumble_events=- rumble=- marks=- dxvk_conf=- steam_init=- mapvk_high=3/1"
 
 if [ "$fails" -eq 0 ]; then echo "check_psy_test: all passed"; else echo "check_psy_test: $fails failure(s)"; exit 1; fi

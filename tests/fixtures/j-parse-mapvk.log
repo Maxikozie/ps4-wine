@@ -1,0 +1,12 @@
+# synthetic fixture, written before session C: the +keyboard trace, for host-game.sh --parse's mapvk_high
+0114:trace:loaddll:build_module Loaded L"C:\\Psychonauts\\Psychonauts.exe" at 00400000: native
+0114:trace:keyboard:NtUserMapVirtualKeyEx code 285, type 1, layout 0x4090409.
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx wCode=0x11d, wMapType=1, hkl 0x4090409
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx returning 0x11.
+0114:trace:keyboard:NtUserMapVirtualKeyEx code 286, type 3, layout 0x4090409.
+0114:trace:keyboard:NtUserMapVirtualKeyEx code 57, type 1, layout 0x4090409.
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx wCode=0x39, wMapType=1, hkl 0x4090409
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx returning 0x20.
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx wCode=0x14d, wMapType=3, hkl 0x4090409
+0114:trace:keyboard:X11DRV_MapVirtualKeyEx returning 0x27.
+0120:trace:keyboard:NtUserMapVirtualKeyEx code 512, type 1, layout 0x4090409.
