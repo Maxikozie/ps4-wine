@@ -53,7 +53,7 @@ PS4WINE f2 gdi32 win32u=ok pixel=ff8000 window=ok screen=800x600 ... fb=ok      
 - The 32-bit GDI picture (gdi64.exe built for i686) reaches VideoOut through wow64win. It is
   on HDMI for 2.0 s, recorded by the viewer itself (`view.sh --record`).
 - **Below 4 GiB before Wine starts, only the eboot is mapped** (0x400000-0x650000), leaving a
-  4089 MiB hole. wow32.exe (base 0x400000, relocatable) was moved to ~0x110000.
+  4089 MiB hole. (2026-11-02: the eboot has grown: 0x400000-0x6bc000 in g1n, 0x6cc000 for the current build; see `HANDOFF-i.md`.) wow32.exe (base 0x400000, relocatable) was moved to ~0x110000.
   - PINBALL.EXE has no relocations and must load at 0x01000000-0x0104b000; that range is free.
   - An EXE without relocations at base 0x400000 (many MSVC games) collides with the eboot. That
     is a risk for g/h: a different eboot base, or a check of each game's base.

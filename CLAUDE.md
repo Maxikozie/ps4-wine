@@ -4,12 +4,15 @@ Wine for a jailbroken PS4 Slim (Orbis OS, OpenOrbis toolchain, GoldHEN), built
 on prospero-win's design: Wine's PE side, Unix side and wineserver all inside
 one PS4 title, 32-bit games on prospero-win's translator (native WoW64 when the
 console allows it), Direct3D through DXVK 2.6.2 on mesa-ps4's RADV. Target:
-Vampire: The Masquerade – Bloodlines (GOG + Unofficial Patch). 32-bit D3D9
-games in general are the goal; 64-bit is a stepping stone.
+Psychonauts (GOG 2.2.0.13, milestones i–n); Vampire: The Masquerade –
+Bloodlines (GOG + Unofficial Patch) is parked at g since 2026-11-02. 32-bit
+D3D9 games in general are the goal; 64-bit is a stepping stone.
 
 Read in this order: `docs/ps4/ARCHITECTURE.md` (what carries over, what is
-rewritten), `docs/ps4/MILESTONES.md` (a–h, one pass/fail check each, and
-phase p between f and g), `docs/ps4/HANDOFF-g.md` (milestone g, Bloodlines:
+rewritten), `docs/ps4/MILESTONES.md` (a–n, one pass/fail check each, and
+phase p between f and g), `docs/ps4/HANDOFF-i.md` (milestones i–n,
+Psychonauts: the research, the plan, the rules, the stop points),
+`docs/ps4/HANDOFF-g.md` (milestone g, Bloodlines, parked 2026-11-02:
 the plan, the rule, what is recorded, DXVK's `vampire.exe` profile),
 `docs/ps4/HANDOFF-p.md` (phase p, performance,
 audio and thread stacks, before g; p1-p6 passed), `docs/ps4/HANDOFF-f.md` (how f was reached; `HANDOFF-e.md`, `HANDOFF-d.md` and `HANDOFF-c.md` for how e, d and c were reached), `docs/ps4/LOG.md` (every

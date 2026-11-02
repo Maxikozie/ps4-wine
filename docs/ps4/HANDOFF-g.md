@@ -3,6 +3,33 @@
 Written 2026-11-01, after phase p (repo `fbd6853`). Read `CLAUDE.md`, then this, then `MILESTONES.md` (the g row
 and note), `HANDOFF-p.md` ("Resume here") and `HANDOFF-f.md` ("Games on the host", the PE image table).
 
+## Parked 2026-11-02
+
+Bloodlines is parked at g, and h with it. The next target is Psychonauts (milestones i-n, `docs/ps4/HANDOFF-i.md`).
+
+| Step | State |
+|---|---|
+| g1n, g1m, g1, g2, gc1, gc2, gc | **PASS** |
+| gpad (L15, LOG.md 04:37) | **FAIL by its rule only on `layer_keys=0`**. Not tested: the L1 layer, holds (`holds=0`) and R3 (the 3rd-person frame was not taken) |
+| g | **Never evaluated on a gameplay window** (details below) |
+| h | Parked with g |
+
+Why g counts as never evaluated:
+- `check.sh g` ran four times (LOG.md 01:16, 01:21, 02:02, 02:05). Each was a FAIL or CRASH before the menu, with
+  `gameplay=0`.
+- L14's log has a `PS4WINE g vtmb` line with `gameplay=1 window_s=0 fps_avg=0.0`. That line came from the window
+  underflow, fixed in c76b600+dirty, and was never checked.
+- No log has a g line from a 300 s window.
+
+**The user's observation, not a pass:** during L15 they played about 5 minutes in game, and the game's own fps counter
+showed about 50 fps on average.
+
+**Console state:** the installed title (`ps4-wine-c76b600+dirty.pkg`) and `env.txt` stay as L15 left them. Milestone
+i's package will replace the title. That title carries plan g and the pad mapper, and i's g2 regression shows that
+Bloodlines still reaches its menu on it.
+
+**Resume point:** the "Next session" list below.
+
 ## Resume here (2026-11-02 04:40: the pointer over DXVK and the DS4 alone in play; gpad owes the L1 layer)
 
 **State at the end of 2026-11-02's session (LOG.md 03:25-04:37):**
