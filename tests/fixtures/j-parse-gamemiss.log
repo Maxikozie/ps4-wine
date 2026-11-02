@@ -1,0 +1,20 @@
+# synthetic fixture, written before the first j run: Wine's output as host-game.sh logs it, for host-game.sh --parse
+0124:trace:loaddll:build_module Loaded L"C:\\Psychonauts\\Psychonauts.exe" at 00410000: native
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\dinput8.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\d3d9.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\d3dx9_40.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\winmm.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\dsound.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\Psychonauts\\isactwin.dll" at 79000000: native
+0124:trace:loaddll:build_module Loaded L"C:\\Psychonauts\\AudioDrv.dll" at 79000000: native
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\xinput1_3.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\Psychonauts\\steam_api.dll" at 79000000: native
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\kernel32.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\user32.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\shell32.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\ole32.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\oleaut32.dll" at 79000000: builtin
+0124:trace:loaddll:build_module Loaded L"C:\\windows\\winsxs\\x86_microsoft.vc90.crt_1fc8b3b9a1e18e3b_9.0.30729.6161_none_deadbeef\\MSVCR90.dll" at 79000000: builtin
+0124:err:module:import_dll Library binkw32.dll (which is needed by L"C:\\Psychonauts\\Psychonauts.exe") not found
+0124:err:module:import_dll Library MSS32.DLL (which is needed by L"C:\\Psychonauts\\binkw32.dll") not found
+PW_VK_BATCH version=1 scope=process tid=320 present=1 result=0 enabled=1 negotiated=1 records=10 enqueued=0 batch_dispatches=0 piggybacks=0 standalone_flushes=0 arena_full=0 fallback=0 wine_unix_crossings=100

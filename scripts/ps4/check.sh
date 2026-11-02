@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -97,6 +97,8 @@ perspective with R3, and an HDMI frame of 3rd person (taken with a ranged weapon
 or fists the game forces 3rd person and R3's z does nothing).
 p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix.h): stretches of grains in
 which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
+j is the host's (Psychonauts on the laptop, docs/ps4/HANDOFF-i.md): host-game.sh --game psychonauts writes
+its line into logs/<ts>-host-psychonauts-j.log; a pass is "PASS (host)", and j gets no LOG.md line.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
 USAGE
@@ -119,7 +121,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -324,6 +326,9 @@ case "$MS" in
           done ;;
     # g: fixed 2026-11-01 before the first g run (docs/ps4/HANDOFF-g.md: gameplay=1 is the user's mark).
     g) word vtmb; req batch eq 1; req gameplay eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
+    # j: fixed 2026-11-02 before the first j run (docs/ps4/HANDOFF-i.md); host only, plus the user's word.
+    j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
+       req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
        # TODO(milestone h): list /data/ps4-wine/prefix/drive_c/VTMB/Unofficial_Patch/save over FTP and require a save newer than the session start.
        log "h: the FTP save-file check is not implemented yet; the log fields are checked"; ;;
@@ -351,6 +356,7 @@ if [ "${#FAILS[@]}" -eq 0 ]; then
     if [ "$MS" = p5 ] && [ "$NOAUDIO" = 1 ]; then emit "PASS (no audio)" "$LINE"
     elif [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"
     elif [ "$HAS_PIXEL" = 1 ] && [ "$FB" = 1 ]; then emit "PASS (framebuffer)" "$LINE"
+    elif [ "$MS" = j ]; then emit "PASS (host)" "$LINE"
     else emit PASS "$LINE"; fi
     exit 0
 else

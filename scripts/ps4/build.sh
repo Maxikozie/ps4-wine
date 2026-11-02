@@ -330,6 +330,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_p5w_test.sh"
     "$REPO_ROOT/tests/check_p6_test.sh"
     "$REPO_ROOT/tests/check_g_test.sh"
+    "$REPO_ROOT/tests/check_psy_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the

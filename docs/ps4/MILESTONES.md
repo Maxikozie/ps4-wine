@@ -212,6 +212,11 @@ launches, what each does not test, regressions and stop points S1-S6. Frame rate
 scan-out) and `<=61` (the game's physics break above 60; DXVK's `d3d9.maxFrameRate = 60` caps it). Order: j may run
 first or alongside i1; l1 rides in i's package, so one regression round covers both. The game picker comes later.
 
+**j, 2026-11-02:** the rule passed on the laptop (`PASS (host)`, session A: 1028 s, 58.5 fps, the save in
+`C:\Psychonauts\Profiles\Profile 1`). The user confirmed menu, gameplay, sound, the save and the load. The bindings
+after a restart failed: Wine bug 20834 writes keyboard names into the pad column of the bindings INI, and after a
+restart the pad's buttons are dead. So j is not passed, and stop point S3 holds (`HANDOFF-i.md`, "j result").
+
 ## Polish (not gating)
 
 Work a milestone does not depend on. None of these blocks the next milestone; each is picked up

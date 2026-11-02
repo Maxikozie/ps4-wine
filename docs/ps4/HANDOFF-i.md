@@ -30,12 +30,23 @@ at the frame rate fixed below (`fps_avg>=30`, `fps_avg<=61`).
   - Psychonauts is not uploaded.
   - Free space on `/data` is unknown: FTP and statfs cannot tell, so the user reads Settings → Storage before k.
 
+**j, 2026-11-02 (host).** The rule passed on session A. The restart check failed, with Wine bug 20834 confirmed, so
+stop point S3 holds. Details are in "j result" under j below.
+- Built:
+  - `host-game.sh --game psychonauts`;
+  - the fork's evdev pad shim (`tests/host_pad_evdev.c`);
+  - `check.sh j` and `tests/check_psy_test.sh`.
+- Not run: j2.
+- Saves are in `C:\Psychonauts\Profiles\Profile 1\`, copied to `build/saves/psychonauts/`.
+
 **Next, in order:**
-1. **j** (host), or alongside i1:
-   - `host-game.sh --game psychonauts`;
-   - the evdev pad shim;
-   - j2 headless.
-2. **i1**, the probe.
+1. **The bindings decision (S3),** the user's. Choose one of:
+   - a Wine `MapVirtualKeyEx` patch, tested in j's setup;
+   - psycho_fix's byte on a copy;
+   - Defaults every session.
+
+   Then re-run j's restart check. Also open: rumble not felt, the touchpad udev rule, and j2 on the user's word.
+2. **i1**, the probe. It does not depend on the bindings.
 3. **i**, the title split, with **l1** in the same package.
 
 **Corrections the research found (applied 2026-11-02):**
@@ -279,6 +290,127 @@ session_s=` when the game exits. The rule is:
 - It also needs the user's word on menu, gameplay, sound, a save and a load, and the bindings after a restart.
 - `tests/check_psy_test.sh` holds the fixtures for j, k, l, m and n.
 
+**j as built (2026-11-02, before session A).** Changes from the plan above:
+- **Where the copy lives.** The copy is `build/prefix-desktop-psychonauts/drive_c/Psychonauts` itself, and
+  `build/host-game/psychonauts` links to it.
+  - The game takes its INIs and saves from `_getcwd`. Behind a link, `getcwd` resolves to `Z:\home\...`.
+  - Double Fine documents glitches when the game is not on C:.
+  - Setup dies unless `wine cmd /c cd` run from the copy prints `C:\Psychonauts`.
+- **winebus `Enable SDL`=0.** It changes nothing on this Wine and only documents the setting.
+  - The desktop Wine has neither SDL nor udev: `.deps/wine-host-desktop/build/include/config.h` leaves
+    `HAVE_SDL_H`, `SONAME_LIBSDL2`, `HAVE_UDEV` and `HAVE_LIBUDEV_H` undefined, and its `winebus.so` has no
+    libSDL2 string.
+  - So winebus never sees the DS4, and the preloaded shim is the pad's only route, as on the console.
+  - Smoke run (17:12): the game's `EnumDevices(DI8DEVCLASS_GAMECTRL, ATTACHEDONLY)` found nothing. It created only
+    the system keyboard, and the prefix has no `Enum\HID` or `Enum\WINEBUS` key.
+- **The pad shim.** Fork `tests/host_pad_evdev.c` (`make host-pad`) is an x86_64 `LD_PRELOAD` that exports only
+  `pw_wine_pad_at` and `pw_wine_set_rumble_at`.
+  - It maps the buttons with `pw_wine_game_pad`'s table. Share and PS are dropped, as the console's DS4 never gives
+    them to a title.
+  - The touchpad's left half is Back while held. Its right half is the mark: `host_pad mark N` in the log, never
+    passed to the game.
+  - Rumble goes out as FF_RUMBLE.
+  - `host_pad_monitor` checks the mapping without Wine. Every button, both sticks over their full range, and both
+    triggers to 255 were seen on event26 (2026-11-02).
+  - The touchpad node (`ID_INPUT_TOUCHPAD`) has no uaccess ACL. Until the user adds a udev rule for it, there is no
+    Back and no mark.
+- **Field definitions of the j line**, fixed before session A:
+  - `exe_base`: the `+loaddll` base of `Psychonauts.exe`.
+  - `dll_missing`: the distinct DLLs the game lacks. That is the imports Wine could not satisfy for a module under
+    `C:\Psychonauts`, plus every DLL `Psychonauts.exe` imports or loads by name (OpenAL32) that never loaded
+    (`dll_absent=`).
+    - Missing imports of Wine's own modules are `dll_missing_wine=`, recorded and not gated.
+    - The case that prompted this: every session logs Wine's Indeo codec `ir50_32.dll` wanting `winegstreamer.dll`
+      during Wine's codec scan (devenum → msvfw32). Neither this Wine nor the console runtime has winegstreamer,
+      and the console runtime ships `ir50_32` too.
+    - The user chose this definition on 2026-11-02, after the smoke run counted that line. The rule's text is
+      unchanged.
+  - `presents`: the last `PW_VK_BATCH` `present=`.
+  - `save_new`: 1 when a file under a `SavedGame<N>` path (any depth, any case) in the game folder or in
+    `drive_c/users` is newer than the session start.
+  - `pad_reads`: the shim's reads of controller 0 while the pad was connected.
+  - `session_s`: wall clock from launch to exit.
+  - Every file the session wrote is listed at the end of the log and kept under
+    `build/host-game/psychonauts-writes/<ts>/`.
+  - `host-game.sh --parse LOG` prints the fields that come from the log; `check_psy_test.sh` tests that parsing.
+
+**j result (2026-11-02): the rule passes, the restart check fails. Stop point S3 holds: no console upload.**
+
+**Session A** (`logs/20261102-172728-host-psychonauts-j.log`, the user's copy, `--debug +keyboard`).
+`check.sh j` gives `PASS (host)`:
+`exe_base=0x00400000 dll_missing=0 presents=60149 save_new=1 pad_reads=181595 session_s=1028 fps_avg=58.5 crossings_per_frame=46 dll_missing_wine=1 dll_absent=- dxvk_conf=found steam_init=- exit=0 dumps=0 pad_first_read_ms=229 rumble_events=31 rumble=ok`.
+- **The user's word:** main menu, New Game, the intro and cutscenes, then Raz in control at the camp for about
+  10 minutes, then saved. Sound throughout. The d-pad works in menus. Nothing odd.
+- **The pad:**
+  - after Options → Bindings → Defaults, the buttons moved, jumped and turned the camera;
+  - the bindings screen only ever shows keyboard keys;
+  - the user felt no rumble (below).
+- **Quitting:** the game cannot be quit from its menu here. It was closed by WM_CLOSE, sent from the game's own
+  virtual desktop: `wine explorer /desktop=psychonauts,1920x1080 taskkill /im Psychonauts.exe`. Wine's `taskkill`
+  without `/f` looks for windows only on its own desktop, so run from the default desktop it reports "not found".
+  The game exited 0 and unloaded its DLLs.
+- **Saves and profile:** `C:\Psychonauts\Profiles\Profile 1\`.
+  - `SavedGame0`-`SavedGame6` are files of 61,439-61,440 B.
+  - `Profile 1- Raz` (57 B).
+  - `Profile 1- Raz.ini`: the bindings and the options.
+  - Creating the profile at the first start writes all seven slots. So on a first launch `save_new=1` does not prove
+    a save by itself.
+  - Here the user's save is the separate write of `SavedGame1` (17:41:57); `SavedGame0` (17:30:01) is probably an
+    autosave.
+  - Copied to `build/saves/psychonauts/` (`--saves-out`).
+  - k's profile key is `saves = C:\Psychonauts\Profiles`, not the inferred `WorkResource\SavedGames`.
+  - Nothing was written under `drive_c/users`. A's guesses (`_getcwd`, the `%s\Profiles` migration) hold;
+    `%LOCALAPPDATA%` is not used.
+- **DLLs:**
+  - Every DLL the EXE imports, and OpenAL32, loaded: native `AudioDrv`, `binkw32`, `isactwin`, `ogg`, `OpenAL32`,
+    `steam_api`, `vorbis`, `vorbisfile`; builtin `MSVCR90` from winsxs, and the rest from system32.
+  - `steam_api` loads and prints nothing; the game runs without Steam.
+  - Wine's codec scan logs the `ir50_32` → `winegstreamer` miss (`dll_missing_wine=1`).
+- **Other err lines:**
+  - wined3d's GL context fails: something probes wined3d before DXVK takes d3d9.
+  - "No software synthesizer midi port": AudioDrv calls `midiOut*`, and the sound still worked.
+- **Frame rate:** 58.5 fps over the session, under `d3d9.maxFrameRate = 60`.
+
+**Session B** (`logs/20261102-175028-host-psychonauts-j.log`, the restart; 242 s, so its own line fails j on
+`save_new=0` and `session_s`, as expected).
+- **The user's word:** after the restart the pad's buttons do nothing. Only the sticks work, and the menus need
+  Space. The save loaded at the camp.
+- The session wrote no file; `Profile 1- Raz.ini` is byte-identical before and after.
+- **Wine bug 20834, confirmed on our Wine.** After session A the INI's pad column (`*_Alt`) holds keyboard names:
+  `Jump_Alt=P`, `Attack_Alt=O`, `Use_Alt=]`, `Cancel_Alt=[`, `LockOn/Float_Alt=Enter`, `LookUp_Alt=F3`,
+  `LookDown_Alt=F3`. Only `PsiPower1_Alt=Joy6` and `LookLeft/Right_Alt=JoyZ` survive.
+  - The `+keyboard` trace shows how: the game passes its joystick codes to
+    `MapVirtualKeyEx(code, MAPVK_VSC_TO_VK)` (`code 285/286/287`, i.e. 0x11d/0x11e/0x11f, about 13,000-21,000
+    calls each).
+  - winex11 matches only the low byte (`winex11.drv/keyboard.c`), so each code aliases a keyboard scan code. For
+    example, 0x11d returns 0x11 (VK_CONTROL).
+  - Defaults put the right codes back into memory, but the INI keeps the keyboard names, and the next start reads
+    them back.
+- **Not tested, inference from the source only:** the console has no driver `MapVirtualKeyEx` and falls back to
+  win32u's generic path. That path reads 0x100-0x2ff as the extended scan-code table (`vsc2vk[0x300]`,
+  `dlls/win32u/input.c:1286-1290`), so 0x11d becomes E0 1D (Right Ctrl) → VK_CONTROL there too. The console would
+  mangle the pad column, though not necessarily into the same names. What Windows returns for these codes is not
+  known here.
+- **The keyboard column reads `MoveForward=Z/Q/S/D`, `PsiPower2=A`. This happens only on the host, and is not the
+  bug:**
+  - XWayland's keymap holds two groups, from KDE's `~/.config/kxkbrc` `LayoutList=be,us`: Belgian first, then
+    `us(altgr-intl)`, which is the active group (`setxkbmap -query`: `us`). The keyboard is physically QWERTY.
+  - winex11 detected both groups ("Belgian keyboard layout" for group 0, "United States" for group 1). It then
+    translated the game's scan codes through group 0.
+  - The console has the one US layout.
+
+**Open after j:**
+1. **The bindings (S3).** The plan's fallbacks need the user's go-ahead, and so does the order:
+   - a Wine patch so `MapVirtualKeyEx(VSC_TO_VK)` returns 0 for codes that are neither plain scan codes nor
+     0xE0/0xE1-prefixed (winex11 for the host, win32u's generic path for the console), tested here in j's setup;
+   - psycho_fix's byte on a copy;
+   - Defaults every session.
+2. **Rumble not felt.** The shim sent 31 changes; `EVIOCSFF` and the `EV_FF` writes reported no error. Not yet
+   measured: the magnitudes the game asked for, and whether the effect's `replay.length = 0` keeps a memless effect
+   running.
+3. **The touchpad (Back and the mark)** needs the user's udev rule; it was untested in A and B.
+4. **j2** (headless, 4 KiB and 16 KiB pages) only on the user's word.
+
 **Not tested:** the console's driver, audio path, pad source and memory. 16 KiB pages only as emulated.
 
 **Stop point S3.** If the game fails on the host for a reason that is not the console's (a crash, no sound, steam_api
@@ -502,8 +634,14 @@ stack reserve 1 MiB; load config present; no TLS directory.
 | `.rsrc` | 0x007a2000 | 0x069c4c | 0x069e00 | 0x40000040 (R) |
 
 Three 16 KiB pages mix protections (computed from the table): 0x400000-0x404000 (headers R + `.text` RX),
-0x77c000-0x780000 (`.rdata` R + `.data` RW), 0x7a0000-0x7a4000 (`.dflua` RW + `.rsrc` R). This is the case patches
-1120/1130 handle (`loader.dll`); `WINE_HOST_PAGE_SIZE=16384` reproduces it on the host.
+0x77c000-0x780000 (`.rdata` R + `.data` RW), 0x7a0000-0x7a4000 (`.dflua` RW + `.rsrc` R). `WINE_HOST_PAGE_SIZE=16384`
+reproduces it on the host.
+- Corrected 2026-11-02: these pages are not handled by patches 1120/1130, which fix decommit, clear and the hot
+  host page of private memory.
+- An image's mixed host page gets the union of its pages' protections, by patch 0974 (its `SEC_IMAGE` branch,
+  0974:179).
+- 0974 is read by ntdll and by wineserver alike, so `wineserver -k` is needed between page sizes.
+- No fixed-base PE32 image has run at 16 KiB yet (j2 and i's `fixed32.exe` would be the first).
 
 **Imports of `Psychonauts.exe`.** `DINPUT8` (`DirectInput8Create`); `d3d9` (`Direct3DCreate9`); `d3dx9_40` (15:
 `D3DXCompileShader`, `D3DXAssembleShader`, `D3DXGetShaderConstantTable`, `D3DXCreateBuffer`, `D3DXFilterTexture`,
