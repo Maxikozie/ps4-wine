@@ -220,3 +220,30 @@ Facts need no licence. "Pro?" marks facts that may not hold on a Slim.
 - `ARCHITECTURE.md:115` and `:137` still say the PS4 has no hardware cursor (gc1 measured one).
 - The DXVK pin reason in `CLAUDE.md` (see "Where they contradict us").
 - Row 10 (`0xf2` on `__ORBIS__`) is ours to fix, whatever orbis-win does.
+
+## FNV diagnosis for orbis-win (2026-11-03)
+
+This was a side task: desk work on his `10-28-sync` and his 1086/1081 logs. Nothing ran on our console.
+
+**Cause.**
+- FalloutNV.exe and several of its DLLs lack NX_COMPAT. Wine therefore forces PROT_EXEC on every readable page
+  (`dlls/ntdll/loader.c:1597`, `mprotect_exec`).
+- On direct memory, his glue turns each such request into an exec migration to flexible memory (the "do not port"
+  row above).
+- That causes two problems:
+  - Its copy-back runs over an already read/write mapping, so other threads read zeros and lose stores.
+  - The migrated heap fills the flexible pool. The top holder was 138–191 MiB of RWX in 4,700–6,400 mappings at
+    every FNV crash, with 1–29 MiB free.
+
+**Fix.**
+- An opt-in `PW_PS4_FORCE_EXEC=0` (his WP/1029, new code, LGPL) keeps no-exec on, so only real code pages ask for exec.
+- He merged it as PR #1 (`e9b0db4`). FNV then ran 15+ minutes, where it had crashed after 1–5.
+
+**Stacks.** His in-process wineserver thread asked for 1 MiB without a stack address, so the SDK interposer raised
+it to the 16 MiB flexible floor. He moved it to a 1 MiB stack himself, from our description, and reports FNV still
+works.
+
+**Still open.** Real code pages still migrate, and F3 is unresolved.
+
+**The full write-up is local and gitignored:** `build/orbis-win-10-28-diag/FNV-DIAGNOSIS.md`, with the logs and
+patches beside it.
