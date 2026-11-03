@@ -123,11 +123,12 @@ apply. Measured, and what each result decides for i:
 - **Not tested before the console:** RADV/Gnm submits after the release, the mouse after it, SubmitDone with GPU work
   in flight, AudioOut output after it, `xinput1_3.prx` loading on the console, LoadExec.
 
-**i on the console, 2026-11-03 03:16-03:47 (LOG L17-L22). Where it stands: fixed32 passes; i's rule waits
-only for the regressions.**
-- **Installed and staged:**
-  - Title `ps4-wine-244aa71+dirty.pkg` (fork 244aa71 + the plan i page dump).
-  - Runtime with fork Wine patch 1140 and the `WINE_PS5_TRACE_PROT` trace (`runtime.sh --prx-only` 03:45).
+**i on the console, 2026-11-03 03:16-05:20 (LOG L17-L28). Where it stands: fixed32 passes on the F1 stub
+without any workaround (L27, native; L28, translator); i's rule waits only for the regressions.**
+- **Installed and staged (updated 05:20, after L28):**
+  - Title `ps4-wine-2d419e0+dirty.pkg`: the stub without `PT_SCE_RELRO` (below, "The cause and the fix").
+  - Runtime of 05:17: no patch 1140; the `WINE_PS5_TRACE_PROT` trace, off unless set.
+  - `env.txt` was last the L28 translator run's; the regressions set their own.
   - Prefix extras: `fixed32.exe` with per-check `FIXED32S step=` lines, `xinput32.exe`, `profiles/xinput32.ini`.
   - The lowbase title holds the i1c probe.
   - `env.txt` was last set to `PS4WINE_MILESTONE=g1n`, with `logs.sh --label g1n` started, for the first regression.
@@ -169,21 +170,52 @@ only for the regressions.**
   - It fired twice, each once: 0x408000 (RWX) and 0x404000 (an RX `.text` page L18 never reached). The kernel
     reported 0x408000 as 0x3 at exit.
   - The check's verdict is FAIL only on the regression half (no g1n/g1m/g1/e/g2 PASS of build `244aa71+dirty`).
-- **Open: who changes an image page's protection outside `__wine_ps5_mprotect`?**
-  - Wine's calls are correct and the kernel honours them in a probe (L21), yet in Wine's process the page refused
-    its fetch and read back as 0x1 (L20).
-  - Suspect: the native WoW64 backend (wow64native, the 32-bit CPU), or something else in Wine's process that
-    calls the kernel directly. In the fork only `wine/wow64native/cpu.c:607` protects memory, and only at its own
-    thunk. Not looked at yet: the native provider's signal entry (patches 0883/1090) and the in-process
-    wineserver.
-  - Alternative: the console does not apply execute to a direct-memory page written before it got execute until
-    it is applied again. This fits 0x404000, an RX page, refaulting too, but L21's single-thread replay did not
-    need it.
-  - **1140 is a workaround until that is known.** The next measurement: the same trace plus a kernel query of
-    each traced page right after each call and at the first fault, on the native CPU and on the translator
-    (`WINE_PS5_WOW64_CPU=wowprospero.dll`).
-- **LOG verdict:** i1b's and i1c's lines are written `RECORDED` (no rule; diagnostic variants), a verdict not
-  in LOG.md's list.
+- **Answered (L23-L28, below):** the kernel's module loader, not Wine. 1140 is removed.
+- **LOG verdict:** i1b's, i1c's and i1d's lines are written `RECORDED` (no rule; diagnostic variants); LOG.md's
+  verdict list now has it.
+
+**The cause and the fix, 2026-11-03 04:47-05:20 (LOG L23-L28).** Planned in the session's plan file; the source
+audit first, then one probe, two traced Wine runs, the fix's probe and two Wine runs.
+- **The source audit found no caller in our code.** The native WoW64 backend protects only its own thunk
+  (`F/wine/wow64native/cpu.c:607`, through ntdll); 0610/0611/0614/0883/1090 change no protection; ntdll's host-page
+  logic gives image pages the union (`virtual.c:2370`) and every call reaches the traced `__wine_ps5_mprotect`; the
+  title imports no protection call; i1b/i1c loaded no module between protect and run.
+- **The cause: the PS4 kernel's module loader re-protects module 0's `PT_SCE_RELRO` on every module load, even
+  after the release,** over whatever is mapped there: read-write during the load, read-only at its end.
+  - L23 (i1d, no Wine): an app PRX (`sceKernelLoadStartModule`), a sysmodule (`sceSysmoduleLoadModule`) and a second
+    app PRX each turned every page of the old RELRO range to R, on direct and flexible memory alike; the old code and
+    data segments, a thread and a dlsym changed nothing; nothing was written; code there faulted on fetch and ran
+    once re-protected.
+  - L24 (Wine, native CPU, the new trace): wineserver.prx split the low reservation at 0x404000/0x410000 (L20's
+    edge); wow64native.prx and win32u.prx each made 0x404000-0x410000 RW, then R, over fixed32. 1140 repaired the
+    fetches.
+  - L25 (translator): the same, and the first touch was a `.data` write, which Wine took as real (crash). 1140 only
+    repaired fetches, and Wine's own re-apply was skipped because its host-protection record was stale.
+- **Why not 1140 or a repair after loads (F2):** loads Wine does not see (the title's pw_hid retries
+  `sceSysmoduleLoadModule` every 5 s while a keyboard or mouse is missing in plan g; Sony libraries' own loads)
+  would re-protect the game's pages again; an unknown loader cannot be hooked.
+- **The fix (F1): a stub eboot without `PT_SCE_RELRO`,** with the pinned create-fself.
+  - create-fself dereferences a PF_R `PT_GNU_RELRO` unconditionally (`pkg/oelf/OELFGenProgramHeaders.go:55-56`: a
+    nil-pointer panic with `-z norelro`, and with the header rewritten to PT_NULL) and drops it, emitting no
+    SCE_RELRO, when the ELF has no `.data.rel.ro` section (`:87`); it rewrites every RW `PT_LOAD` to start at the
+    first `.data*` section, so with OpenOrbis `link.x` (`.dynamic`/`.got`/`.got.plt` before
+    `.data.sce_process_param`, `link.x:37-64`) those would end up unmapped.
+  - So: `F/tools/pw_stub_orbis.ld` (written for this, not from link.x): one RX segment (interpreter path, text,
+    rodata, unwind tables; `--no-rosegment`), one RW segment starting at `.data.sce_process_param` with `.dynamic`,
+    `.got`, `.got.plt`, `.data` (`.data.rel.ro` folded in) and `.bss`; linked `-z norelro`;
+    `F/tools/orbis_stub_norelro.py` checks that layout and turns `PT_GNU_STACK` into an empty PF_R `PT_GNU_RELRO`
+    for create-fself. `build_native_orbis.sh` gates that create-fself's output has no `0x61000010`.
+  - The title's stub is now two pages: RX 0x400000, RW 0x404000 (`low_end=0x408000`).
+  - L26 (i1d with such a stub): it boots, and no load re-protects anything. L27 (native) and L28 (translator):
+    fixed32 passes every check with no repair; every `dl-after` reports `changed=0`.
+- **Removed:** Wine patch 1140 (both versions). **Kept, env-gated:** `WINE_PS5_TRACE_PROT=LOW-HIGH` (ntdll): a
+  look at the kernel's view of the traced pages after every mmap/munmap/mprotect, `dl-before`/`dl-after` around
+  each PRX load (with contents hashes), a 1 ms watcher (`WINE_PS5_TRACE_WATCH=0` turns it off), and
+  `__wine_ps5_prot_query`.
+- **Plastikman's F3 is the same event** (ORBIS-WIN.md row F3).
+- **Not tested:** a repeated `sceSysmoduleLoadModule` of an already-loaded module (pw_hid's retry) and loads by
+  Sony libraries, with today's stub (with no RELRO there is nothing for them to re-protect); sessions longer than
+  fixed32's; a game image other than fixed32 at 0x400000.
 
 **The console sequence for i** (each launch one LOG line; `logs.sh` under `systemd-inhibit --what=sleep`):
 1. `runtime.sh` (full upload), `prefix.sh --extras` (fixed32.exe, xinput32.exe, the xinput32 profile), and
@@ -202,12 +234,12 @@ only for the regressions.**
    suspected, run it again with `PS4WINE_SUBMIT_DONE=0`.
 
 **Next, in order:**
-1. **i's regressions on build `244aa71+dirty`** (runtime with 1140), steps 2.2-2.6 below: g1n, g1m, g1, e, then g2.
-   Each must PASS with `eboot_release=ok`. Then `check.sh i` on L22's log (`logs/20261103-034545-i.log`) is the
-   rule's verdict. A regression that fails released is run again with `PS4WINE_EBOOT_RELEASE=0` (S2's A/B).
+1. **i's regressions on build `2d419e0+dirty`** (the F1 stub, runtime without 1140), steps 2.2-2.6 of the sequence
+   above: g1n, g1m, g1, e, then g2. Each must PASS with `eboot_release=ok`. Then `check.sh i` on L27's log
+   (`logs/20261103-051737-i.log`) is the rule's verdict. A regression that fails released is run again with
+   `PS4WINE_EBOOT_RELEASE=0` (S2's A/B).
 2. **l1**, step 2.7. Then commit fork + repo (the user). Stop point S2 before any Psychonauts upload.
-3. **The open question above** (who changes the protection), before Psychonauts relies on 1140.
-4. **Still open from j:**
+3. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;

@@ -631,10 +631,224 @@ static void st_i1c(void)
 }
 #endif
 
+/* ------------------------------------------------------------------ i1d: who re-protects the old range */
+#ifdef LB_I1D
+/* ps4-wine LOG L20/L22: after the release, Wine's RWX on 0x408000 (inside the stub eboot's
+ * PT_SCE_RELRO segment, 0x404000+0xc000) read back as prot 1 at exit, with a map-entry edge at
+ * 0x410000 (the segment's end) that no Wine call made; wow64native.prx and win32u.prx loaded in
+ * between. Here the released range is mapped again, one page per role gets a protection that differs
+ * from its old segment's (so a re-applied segment protection shows in the query whatever the exec
+ * encoding: dmem RX reads 1, RWX 3), and candidate triggers run one at a time (a thread, an app PRX
+ * load, a sysmodule load, a dlsym, a second app PRX), each followed by a
+ * query of every page, a hash of every readable page (does anything write there?) and our
+ * protections applied again. Recorded only (docs/ps4/HANDOFF-i.md, "who re-protects"). */
+typedef struct { void *start, *end; off_t offset; int32_t prot, mtype; uint8_t bits; char name[32]; } lb_vq;
+
+enum { D_CODE, D_RO0, D_RO, D_ROFLEX, D_DATA, D_OUT, D_PAGES };
+static const char *const d_names[D_PAGES] = { "code", "ro0", "ro", "roflex", "data", "out" };
+static uintptr_t d_page[D_PAGES];
+static int d_want[D_PAGES];
+static uint64_t d_hash[D_PAGES];
+static char d_canary[96];
+static char d_edges[PR_VAL_LEN];
+static uintptr_t d_edge_lo = 1, d_edge_hi = 1;
+
+static int d_query(uintptr_t at, uintptr_t *lo, uintptr_t *hi)
+{
+    lb_vq info;
+    memset(&info, 0, sizeof(info));
+    if (k_vquery((const void *)at, 0, &info, sizeof(info))) return -1;
+    if (lo) *lo = (uintptr_t)info.start;
+    if (hi) *hi = (uintptr_t)info.end;
+    return info.prot;
+}
+
+static uint64_t d_fnv(uintptr_t at)
+{
+    const uint8_t *p = (const uint8_t *)at;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (size_t i = 0; i < K_GRANULE; i++) h = (h ^ p[i]) * 0x100000001b3ull;
+    return h;
+}
+
+/* Our protections, applied (again). */
+static int d_apply(void)
+{
+    int bad = 0;
+    for (int i = 0; i < D_PAGES; i++)
+        if (d_page[i] && k_mprotect((const void *)d_page[i], K_GRANULE, d_want[i])) bad++;
+    return bad;
+}
+
+/* After a step: "P/P/P/P/P/P" in d_names order (-1: no query); the ro0 page's entry range and every
+ * hash difference go to the detail log; the first difference is kept for the line. */
+static void d_snap(const char *step)
+{
+    char prots[64];
+    size_t n = 0;
+    uintptr_t lo = 0, hi = 0;
+    for (int i = 0; i < D_PAGES; i++) {
+        uintptr_t a = 0, b = 0;
+        int p = d_page[i] ? d_query(d_page[i], &a, &b) : -1;
+        n += (size_t)snprintf(prots + n, sizeof(prots) - n, "%s%d", i ? "/" : "", p);
+        if (i == D_RO0) { lo = a; hi = b; }
+        lb_say("  i1d %s %s %#lx prot=%d range=%#lx-%#lx", step, d_names[i], (unsigned long)d_page[i], p,
+               (unsigned long)a, (unsigned long)b);
+        if (d_page[i] && p > 0 && (p & 1)) {
+            uint64_t h = d_fnv(d_page[i]);
+            if (h != d_hash[i]) {
+                lb_say("  i1d %s %s hash changed %016llx -> %016llx", step, d_names[i],
+                       (unsigned long long)d_hash[i], (unsigned long long)h);
+                if (!d_canary[0])
+                    snprintf(d_canary, sizeof(d_canary), "diff:%s@%#lx", step, (unsigned long)d_page[i]);
+                d_hash[i] = h;
+            }
+        }
+    }
+    lb_set(step, "%s", prots);
+    /* The ro0 page's region, kept when it differs from the last one, in 16 KiB pages from 0x400000
+     * (0x22 is 0x488000): "lo-hi@step,..." */
+    if (lo != d_edge_lo || hi != d_edge_hi) {
+        size_t used = strlen(d_edges);
+        snprintf(d_edges + used, sizeof(d_edges) - used, "%s%lx-%lx@%s", used ? "," : "",
+                 (unsigned long)((lo - LOW_BASE) / K_GRANULE), (unsigned long)((hi - LOW_BASE) / K_GRANULE), step + 2);
+        d_edge_lo = lo;
+        d_edge_hi = hi;
+        lb_set("ro_edges", "%s", d_edges);
+    }
+}
+
+static uint8_t *d_code;
+static volatile uint32_t d_got;
+static void d_call(void) { d_got = ((uint32_t (*)(void))d_code)(); }
+
+/* The code in the ro page, called as the page is: "ok", "fault" or "wrong". */
+static void d_exec(const char *key)
+{
+    uint64_t rip = 0, addr = 0;
+    int sig;
+    d_got = 0;
+    d_code = (uint8_t *)d_page[D_RO] + 0x100;
+    sig = lb_guarded(d_call, &rip, &addr);
+    lb_set(key, "%s", sig ? "fault" : d_got == 0x1d1d0001u ? "ok" : "wrong");
+    lb_say("  i1d %s: signal %d rip %#lx addr %#lx got %#x", key, sig, (unsigned long)rip, (unsigned long)addr,
+           (unsigned)d_got);
+}
+
+static void *d_thread(void *arg) { (void)arg; return NULL; }
+
+static void st_i1d(void)
+{
+    const PwPrxSegment *code = NULL, *ro = NULL, *rw = NULL;
+    void *at = (void *)LOW_BASE, *flex;
+    void *by_dlsym = NULL;
+    int32_t mod = -1;
+    int result = 0, rc, i;
+    off_t phys = 0;
+    pthread_t t;
+
+    for (uint32_t s = 0; s < released.segment_count; s++) {
+        const PwPrxSegment *g = &released.segments[s];
+        if ((g->protection & 4) && !code) code = g;
+        else if ((g->protection & 2) && !rw) rw = g;
+        else if (!(g->protection & 6) && !ro) ro = g;
+    }
+#ifdef LB_NORELRO
+    /* A stub without a read-only segment: the pages where the read-only data would have been are
+     * the read-write segment's first ones (.data.sce_process_param, .dynamic, .got, .got.plt). */
+    if (ro || !code || !rw || rw->size < 4 * K_GRANULE) { lb_set("d_map", "segs"); return; }
+    {
+        static PwPrxSegment as_ro;
+        as_ro.address = rw->address;
+        as_ro.size = 3 * K_GRANULE;
+        as_ro.protection = rw->protection;
+        ro = &as_ro;
+    }
+#else
+    if (!code || !ro || !rw || ro->size < 3 * K_GRANULE) { lb_set("d_map", "segs"); return; }
+#endif
+    /* The PE range as Wine takes it: reserved, then direct memory, read-write. */
+    rc = k_reserve(&at, LOW_BYTES, K_MAP_FIXED | K_MAP_NO_OVERWRITE, K_GRANULE);
+    if (!rc) rc = k_alloc_direct(0, (off_t)k_direct_size(), LOW_BYTES, K_GRANULE, K_WB_ONION, &phys);
+    if (!rc) { at = (void *)LOW_BASE; rc = k_map_direct(&at, LOW_BYTES, K_PROT_RW, K_MAP_FIXED, phys, K_GRANULE); }
+    if (rc) { lb_set("d_map", "err:0x%08x", (unsigned)rc); return; }
+    /* One page per role; each protection differs from its old segment's (code RX, RELRO R, data RW). */
+    d_page[D_CODE] = (uintptr_t)code->address + K_GRANULE;   d_want[D_CODE] = K_PROT_RW;    /* RX again: 1 */
+    d_page[D_RO0] = (uintptr_t)ro->address;                  d_want[D_RO0] = K_PROT_RW;     /* R again: 1 */
+    d_page[D_RO] = (uintptr_t)ro->address + K_GRANULE;       d_want[D_RO] = K_PROT_RWX;     /* R again: 1 */
+    d_page[D_ROFLEX] = (uintptr_t)ro->address + 2 * K_GRANULE; d_want[D_ROFLEX] = K_PROT_RW; /* flexible */
+#ifdef LB_NORELRO
+    d_page[D_DATA] = (uintptr_t)rw->address + 3 * K_GRANULE; d_want[D_DATA] = 0x1;          /* RW again: 3 */
+#else
+    d_page[D_DATA] = (uintptr_t)rw->address + K_GRANULE;     d_want[D_DATA] = 0x1;          /* RW again: 3 */
+#endif
+    d_page[D_OUT] = LOW_BASE + 0x300000;                     d_want[D_OUT] = K_PROT_RWX;    /* control */
+    rc = k_munmap((void *)d_page[D_ROFLEX], K_GRANULE);
+    flex = rc ? MAP_FAILED : mmap((void *)d_page[D_ROFLEX], K_GRANULE, PROT_READ | PROT_WRITE,
+                                  MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (flex != (void *)d_page[D_ROFLEX]) { lb_say("  i1d flexible page: rc %d errno %d", rc, errno); d_page[D_ROFLEX] = 0; }
+    /* A canary in every page while it is writable; mov eax, 0x1d1d0001; ret in the ro page. */
+    for (i = 0; i < D_PAGES; i++) {
+        uint32_t *w = (uint32_t *)d_page[i];
+        if (!w) continue;
+        for (size_t k = 0; k < K_GRANULE / 4; k++) w[k] = 0x1d000000u ^ (uint32_t)(d_page[i] >> 14) ^ (uint32_t)k;
+    }
+    {
+        uint8_t *c = (uint8_t *)d_page[D_RO] + 0x100;
+        uint32_t v = 0x1d1d0001u;
+        c[0] = 0xB8; memcpy(c + 1, &v, 4); c[5] = 0xC3;
+    }
+    for (i = 0; i < D_PAGES; i++) if (d_page[i]) d_hash[i] = d_fnv(d_page[i]);
+    rc = d_apply();
+    if (rc) lb_set("d_map", "protect:%d", rc);
+    else lb_set("d_map", "ok");
+    d_snap("s_base");
+
+    /* 1. control: a thread, then 200 ms */
+    if (!pthread_create(&t, NULL, d_thread, NULL)) pthread_join(t, NULL);
+    k_usleep(200 * 1000);
+    d_snap("s_thread");
+    d_apply();
+    /* 2. an app PRX load (sceKernelLoadStartModule only) */
+    mod = k_load_start_module("/app0/sce_module/lowbase_mod.prx", 0, NULL, 0, NULL, &result);
+    lb_set("d_prx", "0x%08x", (unsigned)mod);
+    d_snap("s_prx");
+    d_apply();
+    /* 3. a Sony sysmodule load */
+    rc = sceSysmoduleLoadModule(SYSMODULE_KEYBOARD);
+    lb_set("d_sysmod", "0x%08x", (unsigned)rc);
+    d_snap("s_sysmod");
+    d_apply();
+    /* 4. a symbol lookup only */
+    rc = mod >= 0 ? k_dlsym(mod, "lowbase_mod_value", &by_dlsym) : -1;
+    lb_set("d_dlsym", "0x%08x", (unsigned)rc);
+    d_snap("s_dlsym");
+    d_apply();
+    /* 5. a second app PRX (NEEDs libSceRtc, which nothing else loads); then the ro page's code, called
+     * as the load left it, and again once our protection is applied (1140's repair). Last: a nested
+     * lb_guarded leaves the rest of the stage unguarded, so nothing after it reads memory. */
+    rc = k_load_start_module("/app0/sce_module/lowbase_mod2.prx", 0, NULL, 0, NULL, &result);
+    lb_set("d_prx2", "0x%08x", (unsigned)rc);
+    d_snap("s_prx2");
+    lb_set("canary", "%s", d_canary[0] ? d_canary : "ok");
+    d_exec("exec_ro");
+    d_apply();
+    d_exec("exec_ro_again");
+}
+#endif
+
 /* ------------------------------------------------------------------ the stage runner */
 struct stage { const char *id; const char *field; int timeout_s; lb_stage_fn fn; int skippable; };
 
-#if defined(LB_I1C)
+#if defined(LB_I1D)
+static const struct stage stages[] =
+{
+    { "direct",     "direct_mib", 10, st_direct,     0 },
+    { "vo1",        "vo1",        20, st_vo1,        0 },
+    { "release",    "release",    20, st_release,    0 },
+    { "i1d",        "d_map",      40, st_i1d,        0 },
+};
+#elif defined(LB_I1C)
 static const struct stage stages[] =
 {
     { "direct",     "direct_mib", 10, st_direct,     0 },
@@ -784,7 +998,28 @@ __attribute__((visibility("default"), noreturn)) void lowbase_main( int argc, ch
     if (pthread_create( &wd, NULL, watchdog, NULL )) lb_say_k( "!! no watchdog thread" );
 
     for (size_t i = 0; i < sizeof(stages) / sizeof(stages[0]); i++) run_stage( &stages[i] );
-#if defined(LB_I1C)
+#if defined(LB_I1D)
+    {
+        /* Each s_* field: the protections of code/ro0/ro/roflex/data/out after that step. */
+        static const char *const keys[] = { "release", "low_end", "d_map", "s_base", "s_thread", "d_prx", "s_prx",
+                                            "d_sysmod", "s_sysmod", "d_dlsym", "s_dlsym", "d_prx2", "s_prx2",
+                                            "exec_ro", "exec_ro_again", "ro_edges", "canary" };
+        char line[1200];
+#ifdef LB_NORELRO
+        size_t n = (size_t)snprintf( line, sizeof(line), "PS4WINE i1d reprotect stub=norelro segs=%s",
+                                     lb_get( "segs" ) ? lb_get( "segs" ) : "-" );
+#else
+        size_t n = (size_t)snprintf( line, sizeof(line), "PS4WINE i1d reprotect" );
+#endif
+        for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); k++)
+            n += (size_t)snprintf( line + n, sizeof(line) - n, " %s=%s", keys[k], lb_get( keys[k] ) ? lb_get( keys[k] ) : "-" );
+        snprintf( line + n, sizeof(line) - n, " faults_unresolved=%d launches=%s build=%s", lb_faults_unresolved,
+                  lb_get( "launches" ) ? lb_get( "launches" ) : "-", PROBE_BUILD_ID );
+        lb_emit_line( line );
+        lb_prog_done();
+        for (;;) { sceGnmSubmitDone(); k_usleep( 100000 ); }
+    }
+#elif defined(LB_I1C)
     {
         char line[700];
         snprintf( line, sizeof(line), "PS4WINE i1c imageseq release=%s low_end=%s c_a=%s c_b=%s faults_unresolved=%d "

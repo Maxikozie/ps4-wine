@@ -21,7 +21,8 @@ usage: scripts/ps4/build.sh --check-toolchain
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   lowbase            probes/lowbase/ (a stub eboot + lowbase.prx, which releases the eboot's segments)
                      -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1); --i1b: the
-                     execute-after-release variant -> dist/lowbase-i1b-<id>.pkg (same title)
+                     execute-after-release variant -> dist/lowbase-i1b-<id>.pkg (same title); --i1c:
+                     Wine's image sequence replayed; --i1d: which step re-protects the released range
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
                      the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
@@ -320,8 +321,15 @@ build_lowbase() {
     # --i1b: the execute-after-release variant (stages direct, vo1, release, then code in each former
     # eboot segment and a page beyond; PS4WINE i1b execpages ...), the same title.
     # --i1c: Wine's image-mapping call sequence replayed (ps4-wine LOG L20), PS4WINE i1c imageseq ...
+    # --i1d: the released range mapped again, one page per old segment, then a thread, an app PRX
+    # load, a sysmodule load, a second PRX and a dlsym, each followed by a query (PS4WINE i1d reprotect ...).
+    # --i1d-norelro: i1d with a stub that has no read-only segment (the fork's tools/pw_stub_orbis.ld,
+    # -z norelro, --no-rosegment, tools/orbis_stub_norelro.py): does any load still re-protect?
     case "${1:-}" in --i1b) variant=(-DLB_I1B -Wno-unused-function); name=lowbase-i1b; out="$BUILD_DIR/lowbase-i1b" ;;
-        --i1c) variant=(-DLB_I1C -Wno-unused-function); name=lowbase-i1c; out="$BUILD_DIR/lowbase-i1c" ;; "") ;;
+        --i1c) variant=(-DLB_I1C -Wno-unused-function); name=lowbase-i1c; out="$BUILD_DIR/lowbase-i1c" ;;
+        --i1d) variant=(-DLB_I1D -Wno-unused-function); name=lowbase-i1d; out="$BUILD_DIR/lowbase-i1d" ;;
+        --i1d-norelro) variant=(-DLB_I1D -DLB_NORELRO -Wno-unused-function); name=lowbase-i1d-norelro
+                       out="$BUILD_DIR/lowbase-i1d-norelro" ;; "") ;;
         *) die "build lowbase: unknown option $1" ;; esac
     [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
     [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
@@ -383,7 +391,9 @@ build_lowbase() {
     read -r f tls_mem tls_align <<<"$(phdr_tls "$out/lowbase.elf")"
     clang "${cf[@]}" -DLB_STUB_TLS_BYTES="$(( tls_mem > 0 ? tls_mem : 8 ))" \
         -c "$REPO_ROOT/probes/lowbase/stub.c" -o "$out/obj/stub.o"
-    ld.lld -m elf_x86_64 -pie --script "$oo/link.x" --eh-frame-hdr \
+    local stub_layout=(--script "$oo/link.x")
+    [ "$name" != lowbase-i1d-norelro ] || stub_layout=(-z norelro --no-rosegment --script "$fork/tools/pw_stub_orbis.ld")
+    ld.lld -m elf_x86_64 -pie "${stub_layout[@]}" --eh-frame-hdr \
         "$out/obj/stub.o" "$out/obj/pw_wine_prx.o" \
         -L"$ORBIS_COMPAT_BUILD" -lorbis-compat \
         -L"$oo/lib" -lc -lkernel -lc++ -lSceNet -lSceVideoOut -lSceAudioOut -lSceSystemService -lSceUserService \
@@ -420,6 +430,12 @@ build_lowbase() {
     log "lowbase: stub $(stat -c %s "$out/stub.elf") bytes, PT_TLS $n bytes (lowbase.prx $tls_mem); needs: $(needed "$out/stub.elf" | tr '\n' ' ')"
     log "lowbase: lowbase.prx needs: $(needed "$out/lowbase.elf" | tr '\n' ' ')"
 
+    if [ "$name" = lowbase-i1d-norelro ]; then
+        # The empty PT_GNU_RELRO create-fself needs, after checking the layout; no PT_SCE_RELRO in the eboot.
+        python3 -I "$fork/tools/orbis_stub_norelro.py" "$out/stub.elf" "$out/stub-norelro.elf" ||
+            die "the norelro stub does not have the layout create-fself needs"
+        cp "$out/stub-norelro.elf" "$out/stub.elf"
+    fi
     "$SCRIPT_DIR/pkg.sh" --elf "$out/stub.elf" --name "$name" --title-id "$LOWBASE_TITLE_ID" --title "$LOWBASE_TITLE_NAME" \
         --content-id "IV0000-${LOWBASE_TITLE_ID}_00-LOWBASE000000000" \
         --prx "$out/lowbase.prx" --prx "$out/lowbase_mod.prx" --prx "$out/lowbase_mod2.prx"

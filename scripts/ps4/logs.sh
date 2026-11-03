@@ -43,7 +43,11 @@ OUT="${OUT:-$LOGS_DIR/$(timestamp)-$LABEL.log}"
 PIDS=()
 kill_tree() { local c; for c in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$c"; done; kill "$1" 2>/dev/null || true; }
 cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && { kill_tree "$p"; wait "$p" 2>/dev/null || true; }; done; }
-trap cleanup EXIT INT TERM
+# INT/TERM must end the script: a trap that only cleaned up left the main loop
+# polling forever once its sources were gone (a stale g1n logger, 2026-11-03).
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 stamp() { # stamp TAG: prefix each stdin line and append to $OUT (and the terminal)
     local tag="$1" line

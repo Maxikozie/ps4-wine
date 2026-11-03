@@ -129,6 +129,12 @@ Wine fix is `build.sh wine --skip-host` + `runtime.sh --prx-only`, no reinstall;
   last launch is still running: close it (PS button, Options, Close
   Application) before reinstalling. Installing over it fails with CE-33237-8
   (klog: `sceLncServiceKillApp ... 0x80aa0003`, measured 2026-11-01).
+- After the eboot is released (milestone i), the kernel's module loader still re-protects module 0's
+  `PT_SCE_RELRO` on every module load (app PRX or sysmodule): read-write during the load, read-only at
+  its end, over whatever is mapped there now, direct or flexible memory (LOG L23-L25). The title's stub
+  therefore has no `PT_SCE_RELRO` (the fork's `tools/pw_stub_orbis.ld` + `tools/orbis_stub_norelro.py`;
+  create-fself panics without a PF_R `PT_GNU_RELRO` and drops it when there is no `.data.rel.ro`).
+  `sceKernelVirtualQuery` shows direct-memory RX as prot 1 and RWX as 3: no exec bit for direct memory.
 - Executable memory: `sceKernelAllocateDirectMemory` → map RW → `sceKernelMprotect`
   RWX. Asking for EXEC at map time fails. Page granule 16 KiB.
 - Flexible memory (`mmap(MAP_ANON)`, libc malloc) is ~384–440 MiB. Direct
