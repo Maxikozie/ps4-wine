@@ -105,6 +105,7 @@ static void st_release(void)
         lb_say( "  range%u 0x%lx-0x%lx %s", i, (unsigned long)r.ranges[i].base, (unsigned long)r.ranges[i].end,
                 i < r.unmapped ? "unmapped" : "kept" );
     lb_set( "segs", "%u", r.segment_count );
+    lb_set( "kept", "%u", r.kept );
     lb_set( "low_end", "0x%lx", (unsigned long)r.low_end );
     if (r.after == PW_EBOOT_AFTER_LISTED) lb_set( "module0_after", "listed:%u", r.after_count );
     else if (r.after == PW_EBOOT_AFTER_ERR) lb_set( "module0_after", "err:0x%08x", (unsigned)r.after_rc );
@@ -644,8 +645,9 @@ static void st_i1c(void)
  * protections applied again. Recorded only (docs/ps4/HANDOFF-i.md, "who re-protects"). */
 typedef struct { void *start, *end; off_t offset; int32_t prot, mtype; uint8_t bits; char name[32]; } lb_vq;
 
-enum { D_CODE, D_RO0, D_RO, D_ROFLEX, D_DATA, D_OUT, D_PAGES };
-static const char *const d_names[D_PAGES] = { "code", "ro0", "ro", "roflex", "data", "out" };
+/* kept: the stub's data page where the release keeps it (the far layout), observed only. */
+enum { D_CODE, D_RO0, D_RO, D_ROFLEX, D_DATA, D_OUT, D_KEPT, D_PAGES };
+static const char *const d_names[D_PAGES] = { "code", "ro0", "ro", "roflex", "data", "out", "kept" };
 static uintptr_t d_page[D_PAGES];
 static int d_want[D_PAGES];
 static uint64_t d_hash[D_PAGES];
@@ -676,11 +678,11 @@ static int d_apply(void)
 {
     int bad = 0;
     for (int i = 0; i < D_PAGES; i++)
-        if (d_page[i] && k_mprotect((const void *)d_page[i], K_GRANULE, d_want[i])) bad++;
+        if (d_page[i] && d_want[i] >= 0 && k_mprotect((const void *)d_page[i], K_GRANULE, d_want[i])) bad++;
     return bad;
 }
 
-/* After a step: "P/P/P/P/P/P" in d_names order (-1: no query); the ro0 page's entry range and every
+/* After a step: "P/P/P/P/P/P/P" in d_names order (-1: no query); the ro0 page's entry range and every
  * hash difference go to the detail log; the first difference is kept for the line. */
 static void d_snap(const char *step)
 {
@@ -694,7 +696,7 @@ static void d_snap(const char *step)
         if (i == D_RO0) { lo = a; hi = b; }
         lb_say("  i1d %s %s %#lx prot=%d range=%#lx-%#lx", step, d_names[i], (unsigned long)d_page[i], p,
                (unsigned long)a, (unsigned long)b);
-        if (d_page[i] && p > 0 && (p & 1)) {
+        if (d_page[i] && d_want[i] >= 0 && p > 0 && (p & 1)) {
             uint64_t h = d_fnv(d_page[i]);
             if (h != d_hash[i]) {
                 lb_say("  i1d %s %s hash changed %016llx -> %016llx", step, d_names[i],
@@ -737,14 +739,122 @@ static void d_exec(const char *key)
 
 static void *d_thread(void *arg) { (void)arg; return NULL; }
 
+#ifdef LB_FAR
+/* The far layout (tools/pw_stub_orbis.ld in the fork): only the code segment is released, the data
+ * segment at 0x7fff0000 stays. Does libkernel still read anything from the released code range?
+ * sceKernelGetModuleList and sceKernelGetModuleInfo(0) before the release (the baseline), after it
+ * with nothing mapped there, and with the range refilled with garbage, as a 32-bit program's image
+ * would leave it: each must not fault and must return what the baseline did. */
+extern int32_t k_module_list(int32_t *handles, size_t count, size_t *found) __asm__("sceKernelGetModuleList");
+typedef struct { int rc_list, rc_info, parsed; size_t count; int32_t handles[256]; char name[PW_PRX_MAX_NAME];
+                 uint32_t nsegs; PwPrxSegment segs[PW_PRX_MAX_SEGMENTS]; } m_view;
+static m_view m_base;
+
+static void m_read(m_view *v)
+{
+    uint8_t info[PW_PRX_MODULE_INFO_BYTES];
+    uint64_t size = sizeof(info);
+    memset(v, 0, sizeof(*v));
+    v->rc_list = k_module_list(v->handles, 256, &v->count);
+    memset(info, 0, sizeof(info));
+    memcpy(info, &size, sizeof(size));
+    v->rc_info = k_module_info(0, info);
+    memcpy(info, &size, sizeof(size));
+    v->parsed = !v->rc_info && pw_prx_parse_module_info(info, v->name, v->segs, &v->nsegs) == PW_PRX_OK;
+}
+
+static void st_modbase(void)
+{
+    uintptr_t at = LOW_BASE, code_end = 0;
+    int regions = 0;
+
+    m_read(&m_base);
+    lb_set("ml_base", "%zu:0x%x", m_base.count, (unsigned)m_base.rc_list);
+    lb_set("mi0_base", "%s:%u", m_base.parsed ? m_base.name : "-", m_base.nsegs);
+    for (uint32_t i = 0; i < m_base.nsegs; i++) {
+        lb_say("  modbase seg%u %p size=0x%x prot=0x%x", i, m_base.segs[i].address, m_base.segs[i].size,
+               m_base.segs[i].protection);
+        if (m_base.segs[i].protection & 4)
+            code_end = ((uintptr_t)m_base.segs[i].address + m_base.segs[i].size + K_GRANULE - 1) & ~(uintptr_t)(K_GRANULE - 1);
+    }
+    for (uint32_t i = 0; i < m_base.count && i < 256; i++) lb_say("  modbase handle %d", (int)m_base.handles[i]);
+    /* What is mapped from 0x400000 to just past 0x80000000 before the release (flags 1: the region at
+     * or after the address): the gap between the code and the data segment must be free for Wine. */
+    lb_set("gap", "free");
+    while (at < 0x80100000u && regions < 64) {
+        lb_vq info;
+        memset(&info, 0, sizeof(info));
+        if (k_vquery((const void *)at, 1, &info, sizeof(info))) break;
+        if ((uintptr_t)info.start >= 0x80100000u) break;
+        lb_say("  modbase region %p-%p prot=%d name=%.32s", info.start, info.end, info.prot, info.name);
+        if (code_end && (uintptr_t)info.start >= code_end && (uintptr_t)info.start < 0x7fff0000u &&
+            !strcmp(lb_get("gap") ? lb_get("gap") : "", "free"))
+            lb_set("gap", "busy:%p", info.start);
+        at = (uintptr_t)info.end;
+        regions++;
+    }
+}
+
+static void m_check(const char *key)
+{
+    m_view now;
+    const char *what = NULL;
+
+    m_read(&now);
+    if (now.rc_list || now.rc_info || !now.parsed) what = "rc";
+    else if (now.count != m_base.count || memcmp(now.handles, m_base.handles, now.count * sizeof(int32_t))) what = "list";
+    else if (strcmp(now.name, m_base.name) || now.nsegs != m_base.nsegs ||
+             memcmp(now.segs, m_base.segs, now.nsegs * sizeof(PwPrxSegment))) what = "info";
+    lb_say("  %s: list rc 0x%x count %zu, info rc 0x%x %s segs %u", key, (unsigned)now.rc_list, now.count,
+           (unsigned)now.rc_info, now.parsed ? now.name : "-", now.nsegs);
+    if (what) lb_set(key, "diff:%s", what);
+    else lb_set(key, "ok:%zu/%u", now.count, now.nsegs);
+}
+
+static void st_ml_empty(void) { m_check("ml_empty"); }
+static void st_ml_garbage(void) { m_check("ml_garbage"); }
+#endif
+
+static int d_mapped;
+
+/* The PE range as Wine takes it: reserved, then direct memory, read-write. */
+static int d_map_range(void)
+{
+    void *at = (void *)LOW_BASE;
+    off_t phys = 0;
+    int rc;
+
+    if (d_mapped) return 0;
+    rc = k_reserve(&at, LOW_BYTES, K_MAP_FIXED | K_MAP_NO_OVERWRITE, K_GRANULE);
+    if (!rc) rc = k_alloc_direct(0, (off_t)k_direct_size(), LOW_BYTES, K_GRANULE, K_WB_ONION, &phys);
+    if (!rc) { at = (void *)LOW_BASE; rc = k_map_direct(&at, LOW_BYTES, K_PROT_RW, K_MAP_FIXED, phys, K_GRANULE); }
+    if (rc) { lb_set("d_map", "err:0x%08x", (unsigned)rc); return -1; }
+    d_mapped = 1;
+    return 0;
+}
+
+#ifdef LB_FAR
+/* The released code range mapped again and filled with garbage (xorshift bytes), then read-only. */
+static void st_i1d_map(void)
+{
+    uint64_t x = 0x9e3779b97f4a7c15ull;
+    if (d_map_range()) return;
+    for (uintptr_t a = released.low_base; a < released.low_end; a += 8) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        *(volatile uint64_t *)a = x;
+    }
+    lb_set("d_map", "garbage:%#lx-%#lx", (unsigned long)released.low_base, (unsigned long)released.low_end);
+    k_mprotect((void *)released.low_base, released.low_end - released.low_base, 0x1);
+}
+#endif
+
 static void st_i1d(void)
 {
     const PwPrxSegment *code = NULL, *ro = NULL, *rw = NULL;
-    void *at = (void *)LOW_BASE, *flex;
+    void *flex;
     void *by_dlsym = NULL;
     int32_t mod = -1;
     int result = 0, rc, i;
-    off_t phys = 0;
     pthread_t t;
 
     for (uint32_t s = 0; s < released.segment_count; s++) {
@@ -753,32 +863,36 @@ static void st_i1d(void)
         else if ((g->protection & 2) && !rw) rw = g;
         else if (!(g->protection & 6) && !ro) ro = g;
     }
-#ifdef LB_NORELRO
-    /* A stub without a read-only segment: the pages where the read-only data would have been are
-     * the read-write segment's first ones (.data.sce_process_param, .dynamic, .got, .got.plt). */
-    if (ro || !code || !rw || rw->size < 4 * K_GRANULE) { lb_set("d_map", "segs"); return; }
+#ifdef LB_FAR
+    /* The far layout: no read-only segment; the code segment released, the data segment kept. The
+     * pages that stood for the read-only segment in i1d are further pages of the code range here. */
+    if (ro || !code || !rw || code->size < 6 * K_GRANULE || released.kept != 1) { lb_set("d_map", "segs"); return; }
     {
         static PwPrxSegment as_ro;
-        as_ro.address = rw->address;
+        as_ro.address = (const uint8_t *)code->address + 2 * K_GRANULE;
         as_ro.size = 3 * K_GRANULE;
-        as_ro.protection = rw->protection;
+        as_ro.protection = code->protection;
         ro = &as_ro;
     }
 #else
     if (!code || !ro || !rw || ro->size < 3 * K_GRANULE) { lb_set("d_map", "segs"); return; }
 #endif
-    /* The PE range as Wine takes it: reserved, then direct memory, read-write. */
-    rc = k_reserve(&at, LOW_BYTES, K_MAP_FIXED | K_MAP_NO_OVERWRITE, K_GRANULE);
-    if (!rc) rc = k_alloc_direct(0, (off_t)k_direct_size(), LOW_BYTES, K_GRANULE, K_WB_ONION, &phys);
-    if (!rc) { at = (void *)LOW_BASE; rc = k_map_direct(&at, LOW_BYTES, K_PROT_RW, K_MAP_FIXED, phys, K_GRANULE); }
-    if (rc) { lb_set("d_map", "err:0x%08x", (unsigned)rc); return; }
+    if (d_map_range()) return;
+#ifdef LB_FAR
+    /* st_i1d_map left the garbage read-only. */
+    if (k_mprotect((void *)released.low_base, released.low_end - released.low_base, K_PROT_RW)) {
+        lb_set("s_base", "rw:refused");
+        return;
+    }
+#endif
     /* One page per role; each protection differs from its old segment's (code RX, RELRO R, data RW). */
     d_page[D_CODE] = (uintptr_t)code->address + K_GRANULE;   d_want[D_CODE] = K_PROT_RW;    /* RX again: 1 */
     d_page[D_RO0] = (uintptr_t)ro->address;                  d_want[D_RO0] = K_PROT_RW;     /* R again: 1 */
     d_page[D_RO] = (uintptr_t)ro->address + K_GRANULE;       d_want[D_RO] = K_PROT_RWX;     /* R again: 1 */
     d_page[D_ROFLEX] = (uintptr_t)ro->address + 2 * K_GRANULE; d_want[D_ROFLEX] = K_PROT_RW; /* flexible */
-#ifdef LB_NORELRO
-    d_page[D_DATA] = (uintptr_t)rw->address + 3 * K_GRANULE; d_want[D_DATA] = 0x1;          /* RW again: 3 */
+#ifdef LB_FAR
+    d_page[D_DATA] = (uintptr_t)code->address + 5 * K_GRANULE; d_want[D_DATA] = 0x1;        /* RW again: 3 */
+    d_page[D_KEPT] = (uintptr_t)rw->address;                 d_want[D_KEPT] = -1;           /* observed only */
 #else
     d_page[D_DATA] = (uintptr_t)rw->address + K_GRANULE;     d_want[D_DATA] = 0x1;          /* RW again: 3 */
 #endif
@@ -790,7 +904,7 @@ static void st_i1d(void)
     /* A canary in every page while it is writable; mov eax, 0x1d1d0001; ret in the ro page. */
     for (i = 0; i < D_PAGES; i++) {
         uint32_t *w = (uint32_t *)d_page[i];
-        if (!w) continue;
+        if (!w || d_want[i] < 0) continue;
         for (size_t k = 0; k < K_GRANULE / 4; k++) w[k] = 0x1d000000u ^ (uint32_t)(d_page[i] >> 14) ^ (uint32_t)k;
     }
     {
@@ -798,7 +912,7 @@ static void st_i1d(void)
         uint32_t v = 0x1d1d0001u;
         c[0] = 0xB8; memcpy(c + 1, &v, 4); c[5] = 0xC3;
     }
-    for (i = 0; i < D_PAGES; i++) if (d_page[i]) d_hash[i] = d_fnv(d_page[i]);
+    for (i = 0; i < D_PAGES; i++) if (d_page[i] && d_want[i] >= 0) d_hash[i] = d_fnv(d_page[i]);
     rc = d_apply();
     if (rc) lb_set("d_map", "protect:%d", rc);
     else lb_set("d_map", "ok");
@@ -840,7 +954,19 @@ static void st_i1d(void)
 /* ------------------------------------------------------------------ the stage runner */
 struct stage { const char *id; const char *field; int timeout_s; lb_stage_fn fn; int skippable; };
 
-#if defined(LB_I1D)
+#if defined(LB_I1D) && defined(LB_FAR)
+static const struct stage stages[] =
+{
+    { "direct",     "direct_mib", 10, st_direct,     0 },
+    { "vo1",        "vo1",        20, st_vo1,        0 },
+    { "modbase",    "ml_base",    10, st_modbase,    0 },
+    { "release",    "release",    20, st_release,    0 },
+    { "ml_empty",   "ml_empty",   10, st_ml_empty,   0 },
+    { "i1d_map",    "d_map",      20, st_i1d_map,    0 },
+    { "ml_garbage", "ml_garbage", 10, st_ml_garbage, 0 },
+    { "i1d",        "s_base",     40, st_i1d,        0 },
+};
+#elif defined(LB_I1D)
 static const struct stage stages[] =
 {
     { "direct",     "direct_mib", 10, st_direct,     0 },
@@ -1000,14 +1126,19 @@ __attribute__((visibility("default"), noreturn)) void lowbase_main( int argc, ch
     for (size_t i = 0; i < sizeof(stages) / sizeof(stages[0]); i++) run_stage( &stages[i] );
 #if defined(LB_I1D)
     {
-        /* Each s_* field: the protections of code/ro0/ro/roflex/data/out after that step. */
+        /* Each s_* field: the protections of code/ro0/ro/roflex/data/out/kept after that step. */
         static const char *const keys[] = { "release", "low_end", "d_map", "s_base", "s_thread", "d_prx", "s_prx",
                                             "d_sysmod", "s_sysmod", "d_dlsym", "s_dlsym", "d_prx2", "s_prx2",
                                             "exec_ro", "exec_ro_again", "ro_edges", "canary" };
         char line[1200];
-#ifdef LB_NORELRO
-        size_t n = (size_t)snprintf( line, sizeof(line), "PS4WINE i1d reprotect stub=norelro segs=%s",
-                                     lb_get( "segs" ) ? lb_get( "segs" ) : "-" );
+#ifdef LB_FAR
+        size_t n = (size_t)snprintf( line, sizeof(line), "PS4WINE i1d reprotect stub=far segs=%s kept=%s gap=%s "
+                                     "ml_base=%s mi0_base=%s ml_empty=%s ml_garbage=%s",
+                                     lb_get( "segs" ) ? lb_get( "segs" ) : "-", lb_get( "kept" ) ? lb_get( "kept" ) : "-",
+                                     lb_get( "gap" ) ? lb_get( "gap" ) : "-", lb_get( "ml_base" ) ? lb_get( "ml_base" ) : "-",
+                                     lb_get( "mi0_base" ) ? lb_get( "mi0_base" ) : "-",
+                                     lb_get( "ml_empty" ) ? lb_get( "ml_empty" ) : "-",
+                                     lb_get( "ml_garbage" ) ? lb_get( "ml_garbage" ) : "-" );
 #else
         size_t n = (size_t)snprintf( line, sizeof(line), "PS4WINE i1d reprotect" );
 #endif

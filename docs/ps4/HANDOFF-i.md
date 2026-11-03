@@ -123,12 +123,13 @@ apply. Measured, and what each result decides for i:
 - **Not tested before the console:** RADV/Gnm submits after the release, the mouse after it, SubmitDone with GPU work
   in flight, AudioOut output after it, `xinput1_3.prx` loading on the console, LoadExec.
 
-**i on the console, 2026-11-03 03:16-05:20 (LOG L17-L28). Where it stands: fixed32 passes on the F1 stub
-without any workaround (L27, native; L28, translator); i's rule waits only for the regressions.**
-- **Installed and staged (updated 05:20, after L28):**
-  - Title `ps4-wine-2d419e0+dirty.pkg`: the stub without `PT_SCE_RELRO` (below, "The cause and the fix").
+**i on the console, 2026-11-03 03:16-06:03 (LOG). Where it stands: i PASSED at 06:03 on build `1799f8a+dirty`
+(the stub without PT_SCE_RELRO, its data kept at 0x7fff0000, no 1140); l1 is next.**
+- **Installed and staged (updated 06:03):**
+  - Title `ps4-wine-1799f8a+dirty.pkg`: the stub without `PT_SCE_RELRO`, data at 0x7fff0000 (below, "The cause and
+    the fix").
   - Runtime of 05:17: no patch 1140; the `WINE_PS5_TRACE_PROT` trace, off unless set.
-  - `env.txt` was last the L28 translator run's; the regressions set their own.
+  - `env.txt` was last g2's (`PS4WINE_MILESTONE=g PS4WINE_AUDIO=on WINEDEBUG=+loaddll`).
   - Prefix extras: `fixed32.exe` with per-check `FIXED32S step=` lines, `xinput32.exe`, `profiles/xinput32.ini`.
   - The lowbase title holds the i1c probe.
   - `env.txt` was last set to `PS4WINE_MILESTONE=g1n`, with `logs.sh --label g1n` started, for the first regression.
@@ -212,6 +213,28 @@ audit first, then one probe, two traced Wine runs, the fix's probe and two Wine 
   look at the kernel's view of the traced pages after every mmap/munmap/mprotect, `dl-before`/`dl-after` around
   each PRX load (with contents hashes), a 1 ms watcher (`WINE_PS5_TRACE_WATCH=0` turns it off), and
   `__wine_ps5_prot_query`.
+- **Then the release itself (05:33-05:59, LOG):** e (a 64-bit exe, nothing mapped at 0x400000) crashed before its
+  first frame: ntdll's `pw_native_resolve_kernel` (patches 0883/1090) calls `sceKernelGetModuleList`, and libkernel
+  reads module 0's data, which the release had unmapped (0x404000 with the F1 stub; 0x404000-0x414000 in the old
+  layout too). Every earlier released run had a 32-bit image there whose bytes libkernel read instead. With
+  `PS4WINE_EBOOT_RELEASE=0` e passed (the A/B).
+  - **Fix: the stub's data segment at 0x7fff0000, kept by the release.** `pw_stub_orbis.ld` places it at vaddr
+    0x7fbf0000; `pw_eboot_release` keeps every segment from `PW_EBOOT_KEEP_FROM` (0x7fff0000) up and unmaps the code
+    page alone (`low_end` 0x404000, `kept=1`). Why there: within 2 GiB of the code (the SDK's `libc.a`/`crt1.o` use
+    32-bit relative relocations; at 1 TiB `__init_libc`'s `R_X86_64_REX_GOTPCRELX` is out of range), above every
+    32-bit area Wine reserves (`mmap_init`: 0x10000-0x7fff0000), below its high area (0x1000000000), far from the
+    modules (0x800000000 up), and inside Windows' 64 KiB no-access region 0x7fff0000-0x80000000 (from 0x80000000
+    large-address-aware programs allocate).
+  - **Build gates** (`build_native_orbis.sh`, `orbis_stub_norelro.py --layout 0x404000 0x7fff0000 0x80000000`, on the
+    ELF and on create-fself's output, whose program headers the build prints): code in 0x400000-0x404000, data in
+    0x7fff0000-0x80000000 (the title's: 0x580 bytes), no PT_LOAD in between, no PT_SCE_RELRO.
+  - **The far probe** (`build.sh lowbase --i1d-far`, 05:47): the kernel loads the stub with the 2 GiB gap (nothing
+    mapped between), `sceKernelGetModuleList`/`GetModuleInfo(0)` return the baseline with the released code range
+    unmapped and refilled with garbage (libkernel reads nothing there), and no load re-protects anything. Its own
+    data segment (480 KiB, the probe links libc++) reaches past 0x80000000; the gate holds only the title to the
+    window.
+- **i PASSED (2026-11-03 06:03)** on build `1799f8a+dirty`: fixed32 (05:55, released, no repair) and g1n, g1m, g1,
+  e, g2 all with `eboot_release=ok`. In g2, Vampire.exe ran at its own base 0x400000 for the first time.
 - **Plastikman's F3 is the same event** (ORBIS-WIN.md row F3).
 - **Not tested:** a repeated `sceSysmoduleLoadModule` of an already-loaded module (pw_hid's retry) and loads by
   Sony libraries, with today's stub (with no RELRO there is nothing for them to re-protect); sessions longer than
@@ -234,12 +257,10 @@ audit first, then one probe, two traced Wine runs, the fix's probe and two Wine 
    suspected, run it again with `PS4WINE_SUBMIT_DONE=0`.
 
 **Next, in order:**
-1. **i's regressions on build `2d419e0+dirty`** (the F1 stub, runtime without 1140), steps 2.2-2.6 of the sequence
-   above: g1n, g1m, g1, e, then g2. Each must PASS with `eboot_release=ok`. Then `check.sh i` on L27's log
-   (`logs/20261103-051737-i.log`) is the rule's verdict. A regression that fails released is run again with
-   `PS4WINE_EBOOT_RELEASE=0` (S2's A/B).
-2. **l1**, step 2.7. Then commit fork + repo (the user). Stop point S2 before any Psychonauts upload.
-3. **Still open from j:**
+1. **l1**, step 2.7 (`PS4WINE_MILESTONE=l1`; every button, both sticks to their extremes, both triggers within 30 s,
+   then the user says whether the motors ran), on build `1799f8a+dirty`. Then commit fork + repo (the user). Stop
+   point S2 before any Psychonauts upload.
+2. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;

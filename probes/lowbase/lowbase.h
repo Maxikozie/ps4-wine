@@ -14,8 +14,8 @@
 extern "C" {
 #endif
 
-#if defined(LB_I1D) && defined(LB_NORELRO)
-#define LB_DIR      "/data/ps4-wine/lowbase-i1d-norelro"
+#if defined(LB_I1D) && defined(LB_FAR)
+#define LB_DIR      "/data/ps4-wine/lowbase-i1d-far"
 #elif defined(LB_I1D)
 #define LB_DIR      "/data/ps4-wine/lowbase-i1d"
 #elif defined(LB_I1C)

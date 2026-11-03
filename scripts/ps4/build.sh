@@ -323,13 +323,15 @@ build_lowbase() {
     # --i1c: Wine's image-mapping call sequence replayed (ps4-wine LOG L20), PS4WINE i1c imageseq ...
     # --i1d: the released range mapped again, one page per old segment, then a thread, an app PRX
     # load, a sysmodule load, a second PRX and a dlsym, each followed by a query (PS4WINE i1d reprotect ...).
-    # --i1d-norelro: i1d with a stub that has no read-only segment (the fork's tools/pw_stub_orbis.ld,
-    # -z norelro, --no-rosegment, tools/orbis_stub_norelro.py): does any load still re-protect?
+    # --i1d-far: i1d with the title's stub layout (the fork's tools/pw_stub_orbis.ld, -z norelro,
+    # --no-rosegment, tools/orbis_stub_norelro.py): no read-only segment, the data segment at 0x7fff0000
+    # kept by the release; plus sceKernelGetModuleList/GetModuleInfo(0) with the released code range
+    # unmapped and refilled with garbage.
     case "${1:-}" in --i1b) variant=(-DLB_I1B -Wno-unused-function); name=lowbase-i1b; out="$BUILD_DIR/lowbase-i1b" ;;
         --i1c) variant=(-DLB_I1C -Wno-unused-function); name=lowbase-i1c; out="$BUILD_DIR/lowbase-i1c" ;;
         --i1d) variant=(-DLB_I1D -Wno-unused-function); name=lowbase-i1d; out="$BUILD_DIR/lowbase-i1d" ;;
-        --i1d-norelro) variant=(-DLB_I1D -DLB_NORELRO -Wno-unused-function); name=lowbase-i1d-norelro
-                       out="$BUILD_DIR/lowbase-i1d-norelro" ;; "") ;;
+        --i1d-far) variant=(-DLB_I1D -DLB_FAR -Wno-unused-function); name=lowbase-i1d-far
+                   out="$BUILD_DIR/lowbase-i1d-far" ;; "") ;;
         *) die "build lowbase: unknown option $1" ;; esac
     [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
     [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
@@ -392,7 +394,7 @@ build_lowbase() {
     clang "${cf[@]}" -DLB_STUB_TLS_BYTES="$(( tls_mem > 0 ? tls_mem : 8 ))" \
         -c "$REPO_ROOT/probes/lowbase/stub.c" -o "$out/obj/stub.o"
     local stub_layout=(--script "$oo/link.x")
-    [ "$name" != lowbase-i1d-norelro ] || stub_layout=(-z norelro --no-rosegment --script "$fork/tools/pw_stub_orbis.ld")
+    [ "$name" != lowbase-i1d-far ] || stub_layout=(-z norelro --no-rosegment --script "$fork/tools/pw_stub_orbis.ld")
     ld.lld -m elf_x86_64 -pie "${stub_layout[@]}" --eh-frame-hdr \
         "$out/obj/stub.o" "$out/obj/pw_wine_prx.o" \
         -L"$ORBIS_COMPAT_BUILD" -lorbis-compat \
@@ -430,7 +432,7 @@ build_lowbase() {
     log "lowbase: stub $(stat -c %s "$out/stub.elf") bytes, PT_TLS $n bytes (lowbase.prx $tls_mem); needs: $(needed "$out/stub.elf" | tr '\n' ' ')"
     log "lowbase: lowbase.prx needs: $(needed "$out/lowbase.elf" | tr '\n' ' ')"
 
-    if [ "$name" = lowbase-i1d-norelro ]; then
+    if [ "$name" = lowbase-i1d-far ]; then
         # The empty PT_GNU_RELRO create-fself needs, after checking the layout; no PT_SCE_RELRO in the eboot.
         python3 -I "$fork/tools/orbis_stub_norelro.py" "$out/stub.elf" "$out/stub-norelro.elf" ||
             die "the norelro stub does not have the layout create-fself needs"
