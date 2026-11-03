@@ -123,6 +123,68 @@ apply. Measured, and what each result decides for i:
 - **Not tested before the console:** RADV/Gnm submits after the release, the mouse after it, SubmitDone with GPU work
   in flight, AudioOut output after it, `xinput1_3.prx` loading on the console, LoadExec.
 
+**i on the console, 2026-11-03 03:16-03:47 (LOG L17-L22). Where it stands: fixed32 passes; i's rule waits
+only for the regressions.**
+- **Installed and staged:**
+  - Title `ps4-wine-244aa71+dirty.pkg` (fork 244aa71 + the plan i page dump).
+  - Runtime with fork Wine patch 1140 and the `WINE_PS5_TRACE_PROT` trace (`runtime.sh --prx-only` 03:45).
+  - Prefix extras: `fixed32.exe` with per-check `FIXED32S step=` lines, `xinput32.exe`, `profiles/xinput32.ini`.
+  - The lowbase title holds the i1c probe.
+  - `env.txt` was last set to `PS4WINE_MILESTONE=g1n`, with `logs.sh --label g1n` started, for the first regression.
+- **L17-L18 (FAIL): fixed32 loads at 0x400000, then faults.**
+  - The stub released 0x400000-0x414000 and `fixed32.exe` loaded at `00400000` (+loaddll).
+  - Its first call through an import thunk faulted: c0000005 with `info[0]=8` (execute) at 0x408b40. That is the
+    16 KiB host page `.text` shares with `.data`/`.rdata`/`.ro16`.
+  - mingw's own filter then faulted in its `signal` thunk on the same page.
+- **L19, i1b (`build.sh lowbase --i1b`): no execute restriction in the released range.**
+  - Code ran in each former stub segment (code, read-only, read-write) and beyond it, three ways: direct memory
+    RX, direct memory RWX, flexible RX.
+  - `sceKernelVirtualQuery` reports direct memory RX as prot 0x1 and RWX as 0x3: a missing execute bit in the
+    query does not mean the page can't execute (it corrects ORBIS-WIN F3's reading).
+- **L20, the traced run (`WINE_PS5_TRACE_PROT=400000-81c000`; plan i dumps the kernel's view of fixed32's pages
+  at Wine's exit).** Every host call on the image went through `__wine_ps5_mprotect`/`__wine_ps5_mmap`, all on
+  direct memory, all rc 0:
+  - mmap 0x400000+0x420000 RW;
+  - RWX 0x400000+0x4000;
+  - RX 0x400000+0x8000;
+  - **RWX 0x408000+0x4000** (the shared page: the union, as 0974 designs);
+  - R 0x40c000+0xc000;
+  - RWX, then RW, 0x418000;
+  - RWX, then RW, 0x818000.
+
+  Nothing touched 0x408000 after its RWX. **At exit the kernel reported 0x408000 as prot 0x1**, with no
+  `__wine_ps5_mprotect` call to explain it. Wine's fault handler took the fault as real, because the page's and
+  its host page's protections both have execute.
+- **L21, i1c (`build.sh lowbase --i1c`): the kernel executes and keeps Wine's calls.**
+  - L20's exact sequence was replayed at 0x400000, and at 0x20000000 without the neighbouring R.
+  - The shared page stayed at 0x3 after every step and 200 ms later.
+  - 64-bit code in the RX page, and 64-bit and 32-bit (far jump to 0x33 and back) code in the shared page, all ran.
+- **L22: fixed32 passes every check** with fork Wine patch 1140
+  (`wine/patches/1140-ntdll-orbis-apply-execute-again-on-a-refused-fetch.patch`).
+  - Line: `bits=32 base=0x00400000 relocs=0 size_kib=4212 text_rx=ok rdata_ro=ok rdata_shared=writable
+    data_rw=ok seh=ok thread=ok exit=0`, `eboot_release=ok low_end=0x414000`.
+  - 1140 (`__ORBIS__` only): an instruction fetch that faults on a page whose own and host-page protections have
+    execute gets the host page's protection applied again, past the host-protection record, and runs again. At
+    most 3 tries a page, each logged as `err:virtual:orbis_exec_refault`.
+  - It fired twice, each once: 0x408000 (RWX) and 0x404000 (an RX `.text` page L18 never reached). The kernel
+    reported 0x408000 as 0x3 at exit.
+  - The check's verdict is FAIL only on the regression half (no g1n/g1m/g1/e/g2 PASS of build `244aa71+dirty`).
+- **Open: who changes an image page's protection outside `__wine_ps5_mprotect`?**
+  - Wine's calls are correct and the kernel honours them in a probe (L21), yet in Wine's process the page refused
+    its fetch and read back as 0x1 (L20).
+  - Suspect: the native WoW64 backend (wow64native, the 32-bit CPU), or something else in Wine's process that
+    calls the kernel directly. In the fork only `wine/wow64native/cpu.c:607` protects memory, and only at its own
+    thunk. Not looked at yet: the native provider's signal entry (patches 0883/1090) and the in-process
+    wineserver.
+  - Alternative: the console does not apply execute to a direct-memory page written before it got execute until
+    it is applied again. This fits 0x404000, an RX page, refaulting too, but L21's single-thread replay did not
+    need it.
+  - **1140 is a workaround until that is known.** The next measurement: the same trace plus a kernel query of
+    each traced page right after each call and at the first fault, on the native CPU and on the translator
+    (`WINE_PS5_WOW64_CPU=wowprospero.dll`).
+- **LOG verdict:** i1b's and i1c's lines are written `RECORDED` (no rule; diagnostic variants), a verdict not
+  in LOG.md's list.
+
 **The console sequence for i** (each launch one LOG line; `logs.sh` under `systemd-inhibit --what=sleep`):
 1. `runtime.sh` (full upload), `prefix.sh --extras` (fixed32.exe, xinput32.exe, the xinput32 profile), and
    `deploy.sh dist/ps4-wine-<id>.pkg`. The user closes the running title and installs it over `c76b600+dirty`.
@@ -140,9 +202,12 @@ apply. Measured, and what each result decides for i:
    suspected, run it again with `PS4WINE_SUBMIT_DONE=0`.
 
 **Next, in order:**
-1. **i** and **l1** (one package), the console sequence above, then commit fork + repo (the user). Stop point S2
-   before any Psychonauts upload.
-2. **Still open from j:**
+1. **i's regressions on build `244aa71+dirty`** (runtime with 1140), steps 2.2-2.6 below: g1n, g1m, g1, e, then g2.
+   Each must PASS with `eboot_release=ok`. Then `check.sh i` on L22's log (`logs/20261103-034545-i.log`) is the
+   rule's verdict. A regression that fails released is run again with `PS4WINE_EBOOT_RELEASE=0` (S2's A/B).
+2. **l1**, step 2.7. Then commit fork + repo (the user). Stop point S2 before any Psychonauts upload.
+3. **The open question above** (who changes the protection), before Psychonauts relies on 1140.
+4. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;

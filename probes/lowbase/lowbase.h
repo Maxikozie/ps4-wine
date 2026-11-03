@@ -14,7 +14,13 @@
 extern "C" {
 #endif
 
+#if defined(LB_I1C)
+#define LB_DIR      "/data/ps4-wine/lowbase-i1c"
+#elif defined(LB_I1B)
+#define LB_DIR      "/data/ps4-wine/lowbase-i1b"
+#else
 #define LB_DIR      "/data/ps4-wine/lowbase"
+#endif
 #define LB_PROGRESS LB_DIR "/progress.txt"
 #define LB_RESULTS  LB_DIR "/results.txt"
 #define LB_LOG      LB_DIR "/probe.log"

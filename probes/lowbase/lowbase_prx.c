@@ -15,11 +15,13 @@
 #include "probe_util.h"
 #include "pw_eboot_release.h"
 
+#include <errno.h>
 #include <locale.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #ifndef PROBE_BUILD_ID
@@ -82,6 +84,8 @@ static void st_vo1(void)
 static int eboot_info( void *context, void *info ) { (void)context; return k_module_info( 0, info ); }
 static int eboot_unmap( void *context, void *address, size_t bytes ) { (void)context; return k_munmap( address, bytes ); }
 
+static PwEbootRelease released;   /* i1b reads the segments */
+
 static void st_release(void)
 {
     PwEbootReleaseOps ops = { eboot_info, eboot_unmap, NULL };
@@ -107,6 +111,7 @@ static void st_release(void)
     else lb_set( "module0_after", "%s", pw_eboot_release_after_name( r.after ) );
     eboot_lo = r.low_base;
     eboot_hi = r.low_end;
+    released = r;
     switch (rc)
     {
     case PW_EBOOT_OK: lb_set( "release", "ok" ); break;
@@ -406,9 +411,246 @@ static void st_audio(void)
     else lb_set( "audio", "output:0x%08x", (unsigned)rc );
 }
 
+/* ------------------------------------------------------------------ i1b: execute after the release */
+#ifdef LB_I1B
+/* Can code run in pages that were the eboot's code, read-only and read-write segments, and in a
+ * page beyond the eboot? Each page three ways: direct memory made RX with sceKernelMprotect, then
+ * the same page made RWX, then the page replaced by flexible memory (mmap, anonymous) made RX. Each
+ * result is the call's outcome and the protection sceKernelVirtualQuery reports (ORBIS-WIN F3:
+ * orbis-win saw Mprotect return 0 while the page stayed read-only). */
+typedef struct { void *start, *end; off_t offset; int32_t prot, mtype; uint8_t bits; char name[32]; } lb_vq;
+
+static uint8_t *x_code;
+static volatile uint32_t x_got;
+
+static void x_call(void) { x_got = ((uint32_t (*)(void))x_code)(); }
+
+static int x_prot(const void *at)
+{
+    lb_vq info;
+    memset(&info, 0, sizeof(info));
+    if (k_vquery(at, 0, &info, sizeof(info))) return -1;
+    return info.prot;
+}
+
+/* "ok/P", "fault/P", "wrong/P" or "rc:0x..": the call, then the effective protection. */
+static void x_try(uint8_t *page, int prot, char *out, size_t size)
+{
+    static const uint32_t marker = 0x1b1b0000u;
+    uint32_t want = marker | (uint32_t)((uintptr_t)page >> 14);
+    uint64_t rip = 0, addr = 0;
+    int rc, sig;
+
+    x_code = page + 0x100;
+    rc = k_mprotect(page, K_GRANULE, K_PROT_RW);
+    x_code[0] = 0xB8;
+    memcpy(x_code + 1, &want, 4);
+    x_code[5] = 0xC3;
+    if (!rc) rc = k_mprotect(page, K_GRANULE, prot);
+    if (rc) { snprintf(out, size, "rc:0x%08x/%d", (unsigned)rc, x_prot(page)); return; }
+    x_got = 0;
+    sig = lb_guarded(x_call, &rip, &addr);
+    if (sig) snprintf(out, size, "fault/%d", x_prot(page));
+    else snprintf(out, size, "%s/%d", x_got == want ? "ok" : "wrong", x_prot(page));
+}
+
+static void x_page(const char *key, uintptr_t at)
+{
+    uint8_t *page = (uint8_t *)(at & ~(uintptr_t)(K_GRANULE - 1));
+    char a[32], b[32], c[32];
+    void *flex;
+    int rc;
+
+    x_try(page, K_PROT_RX, a, sizeof(a));
+    x_try(page, K_PROT_RWX, b, sizeof(b));
+    /* Flexible memory in its place (the direct memory's slice is unmapped first). */
+    rc = k_munmap(page, K_GRANULE);
+    flex = rc ? MAP_FAILED : mmap(page, K_GRANULE, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (flex != (void *)page) snprintf(c, sizeof(c), "map:%d", rc ? rc : errno);
+    else x_try(page, K_PROT_RX, c, sizeof(c));
+    lb_say("  %s page %p: dmem RX %s, dmem RWX %s, flexible RX %s", key, (void *)page, a, b, c);
+    lb_set(key, "%s,%s,%s", a, b, c);
+}
+
+static void st_i1b(void)
+{
+    const PwPrxSegment *code = NULL, *ro = NULL, *rw = NULL;
+    void *at = (void *)LOW_BASE;
+    off_t phys = 0;
+    int rc;
+
+    for (uint32_t i = 0; i < released.segment_count; i++) {
+        const PwPrxSegment *s = &released.segments[i];
+        if ((s->protection & 4) && !code) code = s;
+        else if ((s->protection & 2) && !rw) rw = s;
+        else if (!(s->protection & 6) && !ro) ro = s;
+    }
+    /* The PE range as Wine takes it: reserved, then direct memory, read-write. */
+    rc = k_reserve(&at, LOW_BYTES, K_MAP_FIXED | K_MAP_NO_OVERWRITE, K_GRANULE);
+    if (!rc) rc = k_alloc_direct(0, (off_t)k_direct_size(), LOW_BYTES, K_GRANULE, K_WB_ONION, &phys);
+    if (!rc) { at = (void *)LOW_BASE; rc = k_map_direct(&at, LOW_BYTES, K_PROT_RW, K_MAP_FIXED, phys, K_GRANULE); }
+    if (rc) { lb_set("x_map", "err:0x%08x", (unsigned)rc); return; }
+    lb_set("x_map", "ok");
+    /* A page inside each former segment (past its first, which may hold another's tail). */
+    if (code) x_page("x_code", (uintptr_t)code->address + K_GRANULE);
+    if (ro) x_page("x_ro", (uintptr_t)ro->address + (ro->size > 2 * K_GRANULE ? K_GRANULE : 0));
+    if (rw) x_page("x_rw", (uintptr_t)rw->address + K_GRANULE);
+    x_page("x_out", LOW_BASE + 0x300000);   /* beyond the eboot, inside Wine's range */
+}
+#endif
+
+/* ------------------------------------------------------------------ i1c: Wine's image sequence */
+#ifdef LB_I1C
+/* ps4-wine LOG L20: Wine mapped fixed32.exe's view with direct memory RW at 0x400000+0x420000,
+ * then RWX 0x400000+0x4000, RX 0x400000+0x8000, RWX 0x408000+0x4000 (the page .text shares with
+ * .data), R 0x40c000+0xc000, RWX then RW 0x418000; all returned 0, yet the shared page ended
+ * reported prot 1 and 32-bit code there faulted on execute. Replayed here in region A, and in
+ * region B without the neighbouring R protect; the shared page's reported protection after each
+ * step; then a 64-bit call into the RX page and the shared page, and a 32-bit call (far jump to
+ * selector 0x33, back to 0x43) in the shared page. */
+extern uint32_t lb_cs32_enter( const void *farptr );
+extern char lb_cs32_resume[];
+uint64_t lb_cs32_saved_rsp;
+__asm__(
+    ".text\n"
+    ".globl lb_cs32_enter\n"
+    "lb_cs32_enter:\n"
+    "    pushq %rbp\n"
+    "    movq %rsp, %rbp\n"
+    "    pushq %rbx\n"
+    "    pushq %r12\n"
+    "    pushq %r13\n"
+    "    pushq %r14\n"
+    "    pushq %r15\n"
+    "    movq %rsp, lb_cs32_saved_rsp(%rip)\n"
+    "    movl $0x1111, %eax\n"
+    "    ljmpl *(%rdi)\n"
+    ".globl lb_cs32_resume\n"
+    "lb_cs32_resume:\n"
+    "    movq lb_cs32_saved_rsp(%rip), %rsp\n"
+    "    popq %r15\n"
+    "    popq %r14\n"
+    "    popq %r13\n"
+    "    popq %r12\n"
+    "    popq %rbx\n"
+    "    popq %rbp\n"
+    "    ret\n" );
+
+typedef struct { void *start, *end; off_t offset; int32_t prot, mtype; uint8_t bits; char name[32]; } lb_vq;
+static int c_prot(uintptr_t at)
+{
+    lb_vq info;
+    memset(&info, 0, sizeof(info));
+    if (k_vquery((const void *)at, 0, &info, sizeof(info))) return -1;
+    return info.prot;
+}
+
+static uint8_t *c_code;
+static volatile uint32_t c_got;
+static void c_call64(void) { c_got = ((uint32_t (*)(void))c_code)(); }
+static uint8_t *c_far;
+static void c_call32(void) { c_got = lb_cs32_enter(c_far); }
+
+/* 64-bit "mov eax, imm; ret" at at. */
+static void put64(uint8_t *at, uint32_t value)
+{
+    at[0] = 0xB8; memcpy(at + 1, &value, 4); at[5] = 0xC3;
+}
+
+static const char *c_run(void (*fn)(void), uint32_t want, char *out, size_t size)
+{
+    uint64_t rip = 0, addr = 0;
+    int sig;
+    c_got = 0;
+    sig = lb_guarded(fn, &rip, &addr);
+    if (sig) snprintf(out, size, "fault:%d@0x%lx", sig, (unsigned long)addr);
+    else if (c_got == want) snprintf(out, size, "ok");
+    else snprintf(out, size, "wrong:0x%x", c_got);
+    return out;
+}
+
+static void c_region(const char *key, uintptr_t base, int neighbour)
+{
+    uintptr_t shared = base + 0x8000;
+    void *at = (void *)base;
+    off_t phys = 0;
+    char trail[160], r_rx[48], r_rwx[48], r_32[48];
+    size_t n = 0;
+    uint32_t low = (uint32_t)shared, back = 0;
+    int rc;
+
+    rc = k_reserve(&at, 0x420000, K_MAP_FIXED | K_MAP_NO_OVERWRITE, K_GRANULE);
+    if (!rc) rc = k_alloc_direct(0, (off_t)k_direct_size(), 0x420000, K_GRANULE, K_WB_ONION, &phys);
+    if (!rc) { at = (void *)base; rc = k_map_direct(&at, 0x420000, K_PROT_RW, K_MAP_FIXED, phys, K_GRANULE); }
+    if (rc) { lb_set(key, "map:0x%08x", (unsigned)rc); return; }
+    /* The code, while the view is RW (Wine's pread): 64-bit in the RX page and the shared page; in
+     * the shared page also 32-bit code that far-jumps back to a 64-bit trampoline there. */
+    put64((uint8_t *)base + 0x4100, 0x1c100001u);
+    put64((uint8_t *)shared + 0x100, 0x1c100002u);
+    {
+        uint8_t *c = (uint8_t *)shared + 0x200;
+        uint64_t resume = (uint64_t)(uintptr_t)lb_cs32_resume;
+        /* +0x200 32-bit: xor eax,eax; dec eax (eax=-1); nop; ljmp 0x43:+0x300 */
+        c[0] = 0x31; c[1] = 0xC0; c[2] = 0x48; c[3] = 0x90; c[4] = 0xEA;
+        back = low + 0x300; memcpy(c + 5, &back, 4); c[9] = 0x43; c[10] = 0x00;
+        /* +0x300 64-bit: jmp *0(%rip) -> lb_cs32_resume */
+        c[0x100] = 0xFF; c[0x101] = 0x25; memset(c + 0x102, 0, 4); memcpy(c + 0x106, &resume, 8);
+        /* the far pointer 0x33:+0x200, in the RW part of the view */
+        c_far = (uint8_t *)base + 0x418000 - 0x18000 + 0x40;
+        { uint32_t entry = low + 0x200; memcpy(c_far, &entry, 4); c_far[4] = 0x33; c_far[5] = 0; }
+    }
+    n += (size_t)snprintf(trail + n, sizeof(trail) - n, "%d", c_prot(shared));
+    k_mprotect((void *)base, 0x4000, K_PROT_RWX);
+    k_mprotect((void *)base, 0x8000, K_PROT_RX);
+    n += (size_t)snprintf(trail + n, sizeof(trail) - n, "/%d", c_prot(shared));
+    rc = k_mprotect((void *)shared, 0x4000, K_PROT_RWX);
+    n += (size_t)snprintf(trail + n, sizeof(trail) - n, "/rwx%d:%d", rc, c_prot(shared));
+    if (neighbour) {
+        k_mprotect((void *)(base + 0xc000), 0xc000, 0x1);
+        n += (size_t)snprintf(trail + n, sizeof(trail) - n, "/r:%d", c_prot(shared));
+    }
+    k_mprotect((void *)(base + 0x18000), 0x4000, K_PROT_RWX);
+    k_mprotect((void *)(base + 0x18000), 0x400000, K_PROT_RW);
+    n += (size_t)snprintf(trail + n, sizeof(trail) - n, "/%d", c_prot(shared));
+    k_usleep(200 * 1000);   /* the loader's time between mapping and first call */
+    snprintf(trail + n, sizeof(trail) - n, "/%d", c_prot(shared));
+    c_code = (uint8_t *)base + 0x4100;
+    c_run(c_call64, 0x1c100001u, r_rx, sizeof(r_rx));
+    c_code = (uint8_t *)shared + 0x100;
+    c_run(c_call64, 0x1c100002u, r_rwx, sizeof(r_rwx));
+    c_run(c_call32, 0xffffffffu, r_32, sizeof(r_32));
+    lb_say("  %s at %p: shared page prot trail %s; rx64 %s, shared64 %s, shared32 %s", key, (void *)base, trail, r_rx,
+           r_rwx, r_32);
+    lb_set(key, "%s,%s,%s,%s", r_rx, r_rwx, r_32, trail);
+}
+
+static void st_i1c(void)
+{
+    c_region("c_a", LOW_BASE, 1);
+    c_region("c_b", 0x20000000, 0);
+}
+#endif
+
 /* ------------------------------------------------------------------ the stage runner */
 struct stage { const char *id; const char *field; int timeout_s; lb_stage_fn fn; int skippable; };
 
+#if defined(LB_I1C)
+static const struct stage stages[] =
+{
+    { "direct",     "direct_mib", 10, st_direct,     0 },
+    { "vo1",        "vo1",        20, st_vo1,        0 },
+    { "release",    "release",    20, st_release,    0 },
+    { "i1c",        "c_a",        30, st_i1c,        0 },
+};
+#elif defined(LB_I1B)
+static const struct stage stages[] =
+{
+    { "direct",     "direct_mib", 10, st_direct,     0 },
+    { "vo1",        "vo1",        20, st_vo1,        0 },
+    { "release",    "release",    20, st_release,    0 },
+    { "i1b",        "x_map",      30, st_i1b,        0 },
+};
+#else
 static const struct stage stages[] =
 {
     { "direct",     "direct_mib", 10, st_direct,     0 },
@@ -425,6 +667,7 @@ static const struct stage stages[] =
     { "sigsegv",    "fault",      20, st_fault,      1 },
     { "audio",      "audio",      20, st_audio,      1 },
 };
+#endif
 
 static void run_stage( const struct stage *s )
 {
@@ -541,6 +784,33 @@ __attribute__((visibility("default"), noreturn)) void lowbase_main( int argc, ch
     if (pthread_create( &wd, NULL, watchdog, NULL )) lb_say_k( "!! no watchdog thread" );
 
     for (size_t i = 0; i < sizeof(stages) / sizeof(stages[0]); i++) run_stage( &stages[i] );
+#if defined(LB_I1C)
+    {
+        char line[700];
+        snprintf( line, sizeof(line), "PS4WINE i1c imageseq release=%s low_end=%s c_a=%s c_b=%s faults_unresolved=%d "
+                  "launches=%s build=%s", lb_get( "release" ) ? lb_get( "release" ) : "-",
+                  lb_get( "low_end" ) ? lb_get( "low_end" ) : "-", lb_get( "c_a" ) ? lb_get( "c_a" ) : "-",
+                  lb_get( "c_b" ) ? lb_get( "c_b" ) : "-", lb_faults_unresolved,
+                  lb_get( "launches" ) ? lb_get( "launches" ) : "-", PROBE_BUILD_ID );
+        lb_emit_line( line );
+        lb_prog_done();
+        for (;;) { sceGnmSubmitDone(); k_usleep( 100000 ); }
+    }
+#elif defined(LB_I1B)
+    {
+        char line[600];
+        snprintf( line, sizeof(line), "PS4WINE i1b execpages release=%s segs=%s low_end=%s x_map=%s x_code=%s x_ro=%s "
+                  "x_rw=%s x_out=%s faults_unresolved=%d launches=%s build=%s", lb_get( "release" ) ? lb_get( "release" ) : "-",
+                  lb_get( "segs" ) ? lb_get( "segs" ) : "-", lb_get( "low_end" ) ? lb_get( "low_end" ) : "-",
+                  lb_get( "x_map" ) ? lb_get( "x_map" ) : "-", lb_get( "x_code" ) ? lb_get( "x_code" ) : "-",
+                  lb_get( "x_ro" ) ? lb_get( "x_ro" ) : "-", lb_get( "x_rw" ) ? lb_get( "x_rw" ) : "-",
+                  lb_get( "x_out" ) ? lb_get( "x_out" ) : "-", lb_faults_unresolved,
+                  lb_get( "launches" ) ? lb_get( "launches" ) : "-", PROBE_BUILD_ID );
+        lb_emit_line( line );
+        lb_prog_done();
+        for (;;) { sceGnmSubmitDone(); k_usleep( 100000 ); }
+    }
+#endif
     lb_say_k( "i1: stages done (faults %d); alive for %d s with sceGnmSubmitDone", lb_faults_unresolved, ALIVE_S );
     alive_loop();
 }

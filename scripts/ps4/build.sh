@@ -20,7 +20,8 @@ usage: scripts/ps4/build.sh --check-toolchain
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   lowbase            probes/lowbase/ (a stub eboot + lowbase.prx, which releases the eboot's segments)
-                     -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1)
+                     -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1); --i1b: the
+                     execute-after-release variant -> dist/lowbase-i1b-<id>.pkg (same title)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
                      the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
@@ -315,7 +316,13 @@ build_probe() {
 # 16 KiB pages, a gen_prx_descriptor.py --orbis unit for module_start and the PRXDESC1 table).
 build_lowbase() {
     local out="$BUILD_DIR/lowbase" oo="$OO_PS4_TOOLCHAIN" fork="$REPO_ROOT/third_party/prospero-win"
-    local bid cf=() f bad tls_mem tls_align fself n lib
+    local bid cf=() f bad tls_mem tls_align fself n lib name=lowbase variant=()
+    # --i1b: the execute-after-release variant (stages direct, vo1, release, then code in each former
+    # eboot segment and a page beyond; PS4WINE i1b execpages ...), the same title.
+    # --i1c: Wine's image-mapping call sequence replayed (ps4-wine LOG L20), PS4WINE i1c imageseq ...
+    case "${1:-}" in --i1b) variant=(-DLB_I1B -Wno-unused-function); name=lowbase-i1b; out="$BUILD_DIR/lowbase-i1b" ;;
+        --i1c) variant=(-DLB_I1C -Wno-unused-function); name=lowbase-i1c; out="$BUILD_DIR/lowbase-i1c" ;; "") ;;
+        *) die "build lowbase: unknown option $1" ;; esac
     [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
     [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
     [ -f "$fork/src/pw_eboot_release.c" ] || die "the fork has no src/pw_eboot_release.c"
@@ -324,7 +331,7 @@ build_lowbase() {
     # The title's flags without -femulated-tls: the title PRX (milestone i) has real (local-exec)
     # thread-locals in the stub's block, and that path is what the probe measures.
     mapfile -t cf < <(orbis_cflags | grep -vx -- -femulated-tls)
-    cf+=(-I"$REPO_ROOT/probes" -I"$REPO_ROOT/probes/lowbase" -I"$fork/src" -I"$fork/wine/ps5"
+    cf+=("${variant[@]}" -I"$REPO_ROOT/probes" -I"$REPO_ROOT/probes/lowbase" -I"$fork/src" -I"$fork/wine/ps5"
          -DPROBE_BUILD_ID="\"$bid\"" -DPROBE_NETLOG_HOST="\"$PS4_NETLOG_HOST\"" -DPROBE_NETLOG_PORT="$PS4_NETLOG_PORT")
     rm -rf "$out"; mkdir -p "$out/obj"
     log "lowbase: build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
@@ -413,7 +420,8 @@ build_lowbase() {
     log "lowbase: stub $(stat -c %s "$out/stub.elf") bytes, PT_TLS $n bytes (lowbase.prx $tls_mem); needs: $(needed "$out/stub.elf" | tr '\n' ' ')"
     log "lowbase: lowbase.prx needs: $(needed "$out/lowbase.elf" | tr '\n' ' ')"
 
-    "$SCRIPT_DIR/pkg.sh" --elf "$out/stub.elf" --name lowbase --title-id "$LOWBASE_TITLE_ID" --title "$LOWBASE_TITLE_NAME" \
+    "$SCRIPT_DIR/pkg.sh" --elf "$out/stub.elf" --name "$name" --title-id "$LOWBASE_TITLE_ID" --title "$LOWBASE_TITLE_NAME" \
+        --content-id "IV0000-${LOWBASE_TITLE_ID}_00-LOWBASE000000000" \
         --prx "$out/lowbase.prx" --prx "$out/lowbase_mod.prx" --prx "$out/lowbase_mod2.prx"
 }
 
@@ -611,7 +619,7 @@ case "$1" in
     probe) build_probe ;;
     probe-test) probe_test ;;
     triangle) build_triangle ;;
-    lowbase) build_lowbase ;;
+    lowbase) shift; build_lowbase "$@" ;;
     wine) shift; build_wine "$@" ;;
     wine-desktop) shift; build_wine_desktop "$@" ;;
     title) build_title ;;
