@@ -1,0 +1,8 @@
+# synthetic fixture, written before the first k launch (format of logs.sh: HH:MM:SS N|K text)
+10:00:00 N PW_MS start plan=k exe=C:\Psychonauts\Psychonauts.exe stages=0/5 stopped=- launches=1 resumed=- file=/data/ps4-wine/k/progress.txt
+10:00:01 N PW_MS stage=cpu_probe cpu_probe=native native_caps=7
+10:00:01 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+10:00:02 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2
+10:00:02 N PW_MS stage=audio audio=ok
+10:00:03 N PW_MS stage=psychonauts profile=psychonauts profile_status=ok
+10:01:15 N PS4WINE k psychonauts menu=1 exe_base=0x10000000 audio=on grains=5400 grains_nonzero=5100 audio_errors=0 faults_unresolved=0 faults_unhandled=0 exit=running presents=2900 menu_s=48 cpu=native profile=psychonauts profile_status=ok saves=C:\Psychonauts\Profiles dxvk_conf=found dxvk_oom=0 input=pad kbd=- mouse=- bink=1 openal=1 audiodrv=1 isact=1 dsound=1 import_errors=0 flex_mib_start=420 flex_mib_min=250 dmem_peak_mib=900 dmem_low_peak_mib=100 eboot_release=ok low_end=0x404000 build=abc1234+dirty stages=4/5 stopped=- launches=1 resumed=- session_s=75

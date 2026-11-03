@@ -160,6 +160,24 @@ S2 settled, not triggered. k is next.**
   - anything after 06:19:41, including how the session ended;
   - rest mode and LoadExec.
 
+**k PASSED (2026-11-03 20:26, LOG; build `6394f19+dirty`: the title of 20:08, the runtime of 20:09).** Precondition:
+the user read Settings → Storage on 2026-11-03: 160 GB free (≥ 6 GB needed). Details under k below ("k as built",
+"k result").
+- **Line:** `PS4WINE k psychonauts menu=1 exe_base=0x00400000 audio=on grains_nonzero=28906 audio_errors=0
+  faults_unresolved=0 exit=running ... eboot_release=ok`; the menu window's mean -29.4 dB (220:56).
+- **Six k launches.** The first five found three faults outside Psychonauts; each was fixed and the regressions
+  were run again:
+  1. 18:42: a stale 32-bit `opengl32.dll` on the console (pre-0480, the same size, so `runtime.sh`'s size-only
+     mirror never re-sent it): `opengl32.dll failed to initialize`, c0000142.
+  2. 18:52 and 18:56 (traced): "requires DirectX 9.0c": dxdiagn's `GetComputerNameW` fails without wineboot →
+     fork Wine patch 0905.
+  3. 19:53: no free space for saves, so no profile and no main menu (the user played on without saving; the mark
+     fell in a cutscene: FAIL) → patch 1150.
+  4. 20:26: PASS.
+- **Not tested:** the pad as an XInput controller in the game (keys only in k; that is l), saves loaded back, sessions
+  past ~10 min, the first-launch name screen typed (the user accepted the default), rest mode, LoadExec, whether the
+  game ever reads more than the fallback free space (`_fstatfs` is refused).
+
 **i on the console, 2026-11-03 03:16-06:03 (LOG). i PASSED at 06:03 on build `1799f8a+dirty`
 (the stub without PT_SCE_RELRO, its data kept at 0x7fff0000, no 1140).**
 - **Installed and staged (updated 06:03):**
@@ -295,8 +313,17 @@ audit first, then one probe, two traced Wine runs, the fix's probe and two Wine 
 
 **Next, in order:**
 1. ~~**l1**~~ passed 2026-11-03 15:27; S2 settled (above). Commit the repo (the fork is clean at 6394f19).
-2. **k** (below): the user first reads Settings → Storage (at least 6 GB free on /data).
-3. **Still open from j:**
+2. ~~**k**~~ passed 2026-11-03 20:26 (above). Commit the fork, then the repo.
+3. **l** (below), not started. Found in k for it: on the PS4 the first-launch profile screen took Cross as Enter
+   (the k preset), so the name screen is no blocker in keyboard mode; in xinput mode it still needs l's key edges.
+4. **Open from k:**
+   - frame rate: fps_avg 37-58 and fps_low_1pct 10-42 a 10 s window at the camp and the menu, the user saw 10-60
+     fps (m's rule is fps_avg ≥ 30 over 300 s; the 1% low is recorded, not gated);
+   - 11 `syscall fault ... ntdll.prx+0x2dc3d, address 0` errors at the start of every Psychonauts launch, unexplained;
+   - `_fstatfs` is EPERM for a title, so the free space is always the fallback or `WINE_PS5_DISK_FREE_GIB`;
+   - the menu track is quiet: -29.4 dB over the menu window, -31.1 dB from the mark on (the line is -30 dB);
+   - one upload hung 22 min on one file without tripping lftp's 20 s timeout (stopped and resumed by hand).
+5. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;
@@ -368,9 +395,9 @@ The game picker is a later milestone, not planned here.
 
 ### Regressions
 
-- Any title or runtime change: g1n, g1m, g1 and e, by their own rules, before any game launch (`HANDOFF-g.md:241`).
+- Any title or runtime change: g1n, g1m, g1 and e, by their own rules, before any game launch (`HANDOFF-g.md:267-269`; this pointed at :241 before 2026-11-03).
 - Plus g2 whenever plan g's code or the eboot changes (i, k).
-- A title-only change that touches no plan code may skip them only where `HANDOFF-g.md:241` allows.
+- A title-only change that touches no plan code may skip them only where `HANDOFF-g.md:267-269` allows.
 - Each package carries every plan that is ready; launches differ by env.txt only.
 
 ### i: low base (row 16)
@@ -790,8 +817,10 @@ tell).
   - `d3d9=n`, desktop 1920x1080, `show_fps = true`;
   - `[input] preset = psychonauts`;
   - `cpu = native`;
-  - `saves = C:\Psychonauts\WorkResource\SavedGames` (j's measured path);
-  - `DXVK_CONFIG_FILE=C:\Psychonauts\dxvk.conf` in its environment.
+  - `saves = C:\Psychonauts\Profiles` (j's measured path, "Saves and profile" under j; written
+    `WorkResource\SavedGames` here before 2026-11-03, A's inference);
+  - `DXVK_CONFIG_FILE` in its environment (as built: `[debug] env = DXVK_CONFIG_FILE=C:/Psychonauts/dxvk.conf`,
+    forward slashes, since env values refuse `\`).
 - `profiles/psychonauts.dxvk.conf`: `d3d9.maxFrameRate = 60`. `game.sh` uploads it as `C:\Psychonauts\dxvk.conf`.
 - `profiles/input/psychonauts.input`: keys for the menus until l.
 - `scripts/ps4/game.sh --game vtmb|psychonauts` (default `vtmb`): a per-game table of source, destination, excludes
@@ -826,6 +855,81 @@ tell).
 
 **Stop point S4.** If `audio=on` but `grains_nonzero=0`, or the menu window is silent, measure DirectSound's timed wait
 (ORBIS-WIN row 4) before more launches.
+
+**k as built (2026-11-03).**
+- **Repo:**
+  - `profiles/psychonauts.ini`: as above, with `[runtime] saves`, `[debug] env = DXVK_CONFIG_FILE=...` and, from
+    the fifth launch on, `show_fps = false` with `env = DXVK_HUD=fps,frametimes` (show_fps would refuse a DXVK_HUD
+    debug env).
+  - `profiles/input/psychonauts.input`: keyboard mode. The d-pad and the left stick send the arrows, Cross sends
+    Enter, Triangle Space, Circle and Options Escape; the right stick is the mouse, R2/R1 its buttons; the touchpad
+    stays the mark.
+  - `game.sh --game vtmb|psychonauts`: the per-game table; one exclude list for lftp (regex) and the size check
+    (find); extras put after the mirror; manifest by content; saves are the whole `Profiles/`.
+    - **Fixed:** `--only-newer` skipped a partly sent file, whose console copy is newer, so an interrupted upload
+      never resumed (vtmb too). The mirror now compares sizes alone.
+    - Host test `tests/game_sh_test.sh` (lftp to `file://`).
+  - `check.sh k` (p5's audio rule shared as `audio_rule`); fixtures in `tests/check_psy_test.sh` (13 cases).
+  - `tests/profile_parse_test.sh`: every profile and preset through the fork's parsers.
+  - `runtime.sh`: after the size-only mirror, every file whose sha256 differs from
+    `build/runtime-uploaded.manifest` is put again (all 1709 the first time; an lftp script file, since that many
+    puts are too long for a command line).
+    - That is how the stale 32-bit `opengl32.dll` arrived at last.
+    - `ntdll.prx` with 0905 had the same size as before, so the old mirror would have kept the old one too.
+- **Fork:**
+  - plan `k` (stages cpu_probe, wow_bind, display, audio, psychonauts) on g's machinery; `g_plan()` covers g and k.
+  - The profile id defaults to psychonauts for k, vtmb for g; the line word is the profile's id.
+  - `exe_base` comes from the profile's executable through `pw_loaddll_base` (`native/orbis/pw_loaddll_orbis.c`,
+    `tests/test_pw_loaddll_orbis.c`).
+  - The k line at the first mark (later marks counted only); without a mark, at the session's end with `menu=0`.
+  - `PW_MS step k fps` every 10 s; g's window lines now carry `frame_us_p99` and `fps_low_1pct`.
+  - `[runtime] saves` in `pw_game_profile.c` (`profile.runtime.saves`).
+  - **Wine patch 0905** (ntdll, both trees): when wineboot cannot be started, `ActiveComputerName` is made from the
+    stored name. `tests/test_wine_dxdiag.py` failed before it (`computer=err:2 init=0x80004005`) and passes after.
+  - **Wine patch 1150** (ntdll, Orbis):
+    - `get_full_size_info` takes the size from `pw_orbis_volume_size` (`wine/orbis/pw_disk_size_orbis.c`, in
+      ntdll.prx): libkernel's `_fstatfs` into a 0x1000-byte FreeBSD struct statfs.
+    - On failure or 0 blocks: 65 GiB free of 130 GiB (Psychonauts multiplies GetDiskFreeSpaceA's DWORDs in 32 bits,
+      0x553d35: 64 GiB would read as 0).
+    - `WINE_PS5_DISK_FREE_GIB` overrides both. The first query logs `PW_DISK_SIZE`. Host test
+      `tests/test_pw_disk_size_orbis.c`.
+  - `tests/test_wine_gl_absent.py`: opengl32/wined3d/d3dcompiler_47/d3dx9_40 load with and without opengl32's unix
+    library, 32- and 64-bit.
+
+**k result (2026-11-03, LOG 18:29-20:26).**
+- **Upload:** 1719 files, 4,040,026,287 B, in 3.5 min (~19 MB/s) for all but one file. One 21 MB movie hung for
+  22 min without tripping lftp's timeout and was resumed by hand. Every size verified; manifest written.
+- **Regressions:** g1n, g1m, g1, e, g2 passed three times:
+  - on the k title, 18:29-18:36;
+  - g1n-e on the runtime with 0905, 19:34-19:37;
+  - all five on the title of 20:08 and the runtime with 1150, 20:11-20:19.
+- **Launch 1 (18:42):** `Psychonauts.exe` at 0x00400000 with every game DLL, then `opengl32.dll failed to
+  initialize` (c0000142).
+  - The console's 32-bit opengl32.dll was a pre-0480 build of the same size.
+  - A whole-runtime comparison found it the only non-PRX file that differed beyond the PE timestamp. FTP returns
+    PRXs decrypted, so those were checked by size.
+  - Put again and read back byte-identical. The regressions were not rerun for it (the user's choice: none of them
+    loads the 32-bit opengl32).
+- **Launches 2-3 (18:52, 18:56 traced):** the box "Psychonauts requires DirectX 9.0c".
+  - The game's GetDXVersion asks dxdiagn, and dxdiagn's `Initialize` returned E_FAIL at once:
+    `build_systeminfo_tree` fails when `GetComputerNameW` fails.
+  - That call reads `ActiveComputerName`, a volatile key that only wineboot makes, and a title never runs wineboot
+    (`run_wineboot` c00000bb).
+  - The game also looks up `IsTransgaming`/`TGGetOS` in ntdll (absent; its Cider check).
+- **Launch 4 (19:53, FAIL):** with 0905, the intro plays and the game renders at 59.8 fps on the profile screen.
+  - "You don't have enough free space to save games ... Please free 108 more space".
+  - The user continued without saving, went straight into the opening and played. The mark fell in the "The human
+    mind" cutscene.
+  - Sound: -20.8 dB.
+- **Launch 5 = k (20:26, PASS):**
+  - `PW_DISK_SIZE rc=-1 errno=1`: `_fstatfs` is EPERM for a title, so the fallback answered.
+  - The user skipped the intro, created a profile, played at the camp and saved ("Saving game").
+  - Then Quit to Title: the main menu was on screen 220-276 s into the recording, and the user marked it at 225 s.
+  - Audio mean -29.4 dB over 220:56, -31.1 dB from the mark on. Frame times are under "Open from k".
+- **In the game (the user):** keyboard prompts, as k's pad is keys. The DS4 as an Xbox pad is l.
+- **Evidence:** `logs/20261103-201938-k5-menu.png` (HDMI, the menu with the frame-time graph),
+  `logs/20261103-201938-k5-menu.{mkv,wav}`, `logs/20261103-194818-k4-screen.png` (the free-space message),
+  `logs/20261103-185018-k2-dxerror.png`.
 
 **Commit** fork and repo after k passes (the user commits).
 

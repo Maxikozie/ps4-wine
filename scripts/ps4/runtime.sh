@@ -17,7 +17,10 @@ from the fork's .deps/wine-orbis/prx/sce_module/*.prx and .deps/wine-host/instal
 wowprospero.dll, the WoW64 CPU backend, from the host build tree: it is not installed), then mirrors
 it to \$PS4_HOST:/data/ps4-wine/runtime with lftp and verifies every file's size in the listing
 (FTP returns .prx files decrypted, so sizes, not hashes). PRX files get mode 777 (the loader
-refuses modules without the execute bit).
+refuses modules without the execute bit). The mirror compares sizes only, so a rebuilt file of the
+same size would stay old on the console (a PE module's size changes in 512-byte steps): every file
+whose sha256 differs from build/runtime-uploaded.manifest (what the last verified upload sent; all
+files when there is none) is put again, and the manifest is written after the size check passes.
   --stage-only   stage, do not upload
   --prx-only     stage and upload lib/wine/x86_64-unix only (the usual bring-up iteration)
   --dest DIR     console directory (default $PS4_DATA_ROOT/runtime)
@@ -101,9 +104,30 @@ mirror -R --no-perms --parallel=4 --only-newer --ignore-time '$SRC' '$DEST$SUB';
 chmod -R 777 '$DEST/win/wine/lib/wine/x86_64-unix';
 quit"
 fi
+# Files whose contents changed since the last verified upload (sizes alone miss a rebuild of the same
+# size): put each one again after the mirror.
+MANIFEST="$BUILD_DIR/runtime-uploaded.manifest"
+if [ "$SRC" = "$RUNTIME" ]; then SCOPE=.; else SCOPE="${SRC#"$RUNTIME/"}"; fi
+HASHES="$(cd "$RUNTIME" && find "$SCOPE" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sed 's|  \./|  |')"
+CHANGED="$(LC_ALL=C comm -23 <(printf '%s\n' "$HASHES" | LC_ALL=C sort) <(LC_ALL=C sort "$MANIFEST" 2>/dev/null || true) |
+    sed 's/^[0-9a-f]*  //')"
+PUTS2=""
+[ "$PRX_ONLY" = 1 ] && CHANGED=""   # --prx-only puts every file of its directory anyway
+while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    PUTS2="$PUTS2 put -O '$DEST/$(dirname "$rel")' '$RUNTIME/$rel';"
+done <<<"$CHANGED"
+if [ -n "$PUTS2" ]; then
+    CMDS="${CMDS%quit}$PUTS2
+chmod -R 777 '$DEST/win/wine/lib/wine/x86_64-unix';
+quit"
+fi
+log "$(printf '%s' "$CHANGED" | grep -c . || true) file(s) changed since ${MANIFEST#"$REPO_ROOT/"}: put after the mirror"
 if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$CMDS"; exit 0; fi
 log "uploading to ftp://$PS4_HOST:$PS4_FTP_PORT$DEST$SUB"
-lftp -c "$CMDS" >&2
+script="$(mktemp)"; trap 'rm -f "$script"' EXIT
+printf '%s\n' "$CMDS" > "$script"   # one put a changed file: too long for a command line
+lftp -f "$script" >&2
 # 4. verify by size: the listing of every directory we uploaded
 bad=0; checked=0
 while IFS= read -r f; do
@@ -116,3 +140,8 @@ while IFS= read -r f; do
 done < <(find "$SRC" -type f \( -name '*.prx' -o -name '*.bind.txt' -o -path '*/nls/*' -o -name 'ntdll.dll' -o -name 'kernel32.dll' -o -name 'kernelbase.dll' -o -name 'msvcrt.dll' -o -name 'ucrtbase.dll' -o -name 'wowprospero.dll' -o -name 'wow64native.dll' \))
 log "verified $checked file sizes, $bad mismatch(es)"
 [ "$bad" = 0 ] || die "upload incomplete"
+# What the console now holds: this upload's files replace their lines in the manifest.
+{ if [ -f "$MANIFEST" ]; then awk 'NR == FNR { seen[$2] = 1; next } !($2 in seen)' <(printf '%s\n' "$HASHES") "$MANIFEST"; fi
+  printf '%s\n' "$HASHES"; } | awk 'NF' | LC_ALL=C sort -k2 > "$MANIFEST.new"
+mv "$MANIFEST.new" "$MANIFEST"
+log "manifest: ${MANIFEST#"$REPO_ROOT/"} ($(wc -l < "$MANIFEST") files)"

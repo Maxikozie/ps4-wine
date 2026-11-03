@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1|i|l1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -21,9 +21,10 @@ usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g
                is checked, the HDMI output is not
   --note TEXT  free text for the last column of the LOG.md line
   --audio WAV --audio-window S:D
-               p5: the WAV beside the launch's recording (view.sh --record) and the window, start S
-               and length D in seconds from the recording's start, that holds the scripted tail
-  --no-audio   p5: skip the HDMI audio rule ("PASS (no audio)"; the rule is still owed)
+               p5, k: the WAV beside the launch's recording (view.sh --record) and the window, start S
+               and length D in seconds from the recording's start, that holds the scripted tail (p5)
+               or the main menu (k)
+  --no-audio   p5, k: skip the HDMI audio rule ("PASS (no audio)"; the rule is still owed)
 Pixel rules: b  960,540 = 0,255,0 (triangle centre; CHECK_B_RGB overrides) and 240,135 = 255,128,0
                 (orange marker: swapped red and blue fail it); d1 the same two on the title's VideoOut
                 test pattern (framebuffer only: use --fb); e  960,540 = CHECK_E_RGB.
@@ -110,6 +111,10 @@ docs/ps4/LOG.md (CHECK_LOG_MD overrides it) must hold PASS lines of the same bui
 each with eboot_release=ok. l1 is xinput32.exe reading the DS4 as XInput controller 0: bits=32 get0=0 caps=0
 buttons_seen=0xf3ff, every stick axis to -30000 and 30000, both triggers to 250, set0=0, rumble_events>=2,
 faults_unresolved=0, exit=0.
+k is Psychonauts' main menu on the PS4 with sound (fixed 2026-11-03 before the first k run): menu=1 (the user's
+first mark), exe_base=0x00400000, eboot_release=ok, audio=on, grains_nonzero>=10, audio_errors=0,
+faults_unresolved=0, exit=running, and p5's HDMI audio rule over the menu window (--audio WAV --audio-window S:D,
+mean >= -30 dB, or --no-audio); its HDMI frame of the menu is evidence, not checked.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
 USAGE
@@ -132,11 +137,12 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1|i|l1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
-if [ "$MS" = p5 ]; then
+if [ "$MS" = p5 ] || [ "$MS" = k ]; then
+    if [ "$MS" = p5 ]; then AUDIO_WHAT="the tail's window"; else AUDIO_WHAT="the menu window"; fi
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
-        die "p5: give --audio WAV --audio-window S:D (the recording's sound and the tail's window) or --no-audio"
+        die "$MS: give --audio WAV --audio-window S:D (the recording's sound and $AUDIO_WHAT) or --no-audio"
 fi
 if [[ "$MS" == gc[12] ]]; then
     [ "$FB" = 0 ] || die "$MS: the cursor is VideoOut's plane, not in the framebuffer: HDMI only (--shot FRAME from the recording)"
@@ -175,7 +181,7 @@ if [ -z "$LINE" ]; then
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
           "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ||
-          "$MS" == i1 || "$MS" == i || "$MS" == l1 ]]; then
+          "$MS" == i1 || "$MS" == i || "$MS" == l1 || "$MS" == k ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -209,6 +215,18 @@ all() { # all KEY: an "N/M" count with every one of M > 0 (every import slot bou
     if [ -z "$have" ]; then FAILS+=("$1 missing"); return; fi
     [[ "$have" =~ ^([0-9]+)/([0-9]+)$ ]] && [ "${BASH_REMATCH[2]}" -gt 0 ] && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] ||
         FAILS+=("$1=$have not all")
+}
+audio_rule() { # p5's D and k's: the recording's window, unless --no-audio
+    [ "$NOAUDIO" = 0 ] && [ -n "$AUDIO" ] || return 0
+    # D: the window averages >= -30 dB on the stick's input; two silent PS4 recordings
+    # measured -39.5 and -36.9 dB mean (peaks -25.9 and -19.5: the input is noisy, so the
+    # mean, not the peak) before the first p5 run.
+    local mean
+    mean="$(ffmpeg -hide_banner -nostats -ss "${AUDIO_WINDOW%%:*}" -t "${AUDIO_WINDOW#*:}" -i "$AUDIO" \
+            -af volumedetect -f null - 2>&1 | sed -n 's/.*mean_volume: \(-*[0-9.]*\) dB.*/\1/p' | tail -n1)"
+    if [ -z "$mean" ]; then FAILS+=("audio: no level read from $(basename "$AUDIO")")
+    elif ! awk -v m="$mean" 'BEGIN { exit !(m >= -30) }'; then FAILS+=("audio mean ${mean} dB < -30 dB")
+    else NOTE="${NOTE:+$NOTE; }HDMI audio mean ${mean} dB in ${AUDIO_WINDOW}"; fi
 }
 
 PIXELS=(); HAS_PIXEL=0   # "X,Y=R,G,B" rules, all read from one image
@@ -266,16 +284,7 @@ case "$MS" in
         req grains_nonzero ge 10; req underruns eq 0
         # The rate gate's branch, fixed when p4 passed (2026-11-01 18:40): p4's own rule on p4's path.
         req present_mode eq async; req shown_hz ge 59
-        if [ "$NOAUDIO" = 0 ] && [ -n "$AUDIO" ]; then
-            # D: the tail's window averages >= -30 dB on the stick's input; two silent PS4 recordings
-            # measured -39.5 and -36.9 dB mean (peaks -25.9 and -19.5: the input is noisy, so the
-            # mean, not the peak) before the first p5 run.
-            mean="$(ffmpeg -hide_banner -nostats -ss "${AUDIO_WINDOW%%:*}" -t "${AUDIO_WINDOW#*:}" -i "$AUDIO" \
-                    -af volumedetect -f null - 2>&1 | sed -n 's/.*mean_volume: \(-*[0-9.]*\) dB.*/\1/p' | tail -n1)"
-            if [ -z "$mean" ]; then FAILS+=("audio: no level read from $(basename "$AUDIO")")
-            elif ! awk -v m="$mean" 'BEGIN { exit !(m >= -30) }'; then FAILS+=("audio mean ${mean} dB < -30 dB")
-            else NOTE="${NOTE:+$NOTE; }HDMI audio mean ${mean} dB in ${AUDIO_WINDOW}"; fi
-        fi ;;
+        audio_rule ;;
     p5w) # Written before the first p5w launch (docs/ps4/HANDOFF-p.md): every window made on every thread.
          word wincb; all main_ok; all new_ok; req direct_main eq 1; req direct_new eq 1; req cbt_main ge 1
          req cbt_new ge 1; req cross eq ok; req exit eq 0; req faults_unresolved eq 0 ;;
@@ -361,6 +370,11 @@ case "$MS" in
         for a in lx ly rx ry; do req "${a}_min" le -30000; req "${a}_max" ge 30000; done
         req lt_max ge 250; req rt_max ge 250; req set0 eq 0; req rumble_events ge 2
         req faults_unresolved eq 0; req exit eq 0 ;;
+    # k: fixed 2026-11-03 before the first k run (docs/ps4/HANDOFF-i.md): Psychonauts' main menu, the user's
+    # first mark, with p5's audio rule over the menu window; an HDMI frame is kept as evidence, not checked.
+    k) word psychonauts; req menu eq 1; req exe_base eq 0x00400000; req eboot_release eq ok; req audio eq on
+       req grains_nonzero ge 10; req audio_errors eq 0; req faults_unresolved eq 0; req exit eq running
+       audio_rule ;;
     j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
        req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1
@@ -387,7 +401,7 @@ if [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 0 ]; then
 fi
 
 if [ "${#FAILS[@]}" -eq 0 ]; then
-    if [ "$MS" = p5 ] && [ "$NOAUDIO" = 1 ]; then emit "PASS (no audio)" "$LINE"
+    if { [ "$MS" = p5 ] || [ "$MS" = k ]; } && [ "$NOAUDIO" = 1 ]; then emit "PASS (no audio)" "$LINE"
     elif [ "$HAS_PIXEL" = 1 ] && [ "$NOSHOT" = 1 ]; then emit "PASS (no shot)" "$LINE"
     elif [ "$HAS_PIXEL" = 1 ] && [ "$FB" = 1 ]; then emit "PASS (framebuffer)" "$LINE"
     elif [ "$MS" = j ]; then emit "PASS (host)" "$LINE"

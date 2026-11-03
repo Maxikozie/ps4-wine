@@ -1,0 +1,36 @@
+; Psychonauts' menus on the DS4 (milestone k, docs/ps4/HANDOFF-i.md): keyboard mode, temporary until milestone l
+; switches the profile to xinput (the game's own pad support). The menus take the arrow keys, Enter and Escape;
+; the first launch's new-profile screen (the bunk bed and the name) takes only Enter and Esc. The laptop run of
+; milestone j found the menus wanting Space once the pad's bindings were lost, so triangle sends Space as a
+; second confirm. Gameplay is not laid out here: no movement or camera keys until l.
+;
+;   up down left right  the arrow keys    move through the menus
+;   left stick          the arrow keys    the same, as four held keys past a 40% push
+;   cross               enter             confirm (and the name screen)
+;   circle              escape            back (and the name screen)
+;   options             escape            back, the game's menu
+;   triangle            space             confirm, as the menus took it on the laptop
+;   right stick                           the mouse pointer
+;   r2 / r1             mouse_left / mouse_right
+;   touchpad                              the title's marks (the title keeps it unbound): a tap marks the menu
+;   create (Share)                        unbound: the PS4 system takes it for its share menu
+[input]
+mode = keyboard
+mouse = right_stick
+mouse_speed = 600
+keyboard_stick = left_stick
+stick_deadzone = 40
+stick_up = up
+stick_down = down
+stick_left = left
+stick_right = right
+up = up
+down = down
+left = left
+right = right
+cross = enter
+circle = escape
+options = escape
+triangle = space
+r2 = mouse_left
+r1 = mouse_right
