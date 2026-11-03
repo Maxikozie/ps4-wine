@@ -314,7 +314,8 @@ audit first, then one probe, two traced Wine runs, the fix's probe and two Wine 
 **Next, in order:**
 1. ~~**l1**~~ passed 2026-11-03 15:27; S2 settled (above). Commit the repo (the fork is clean at 6394f19).
 2. ~~**k**~~ passed 2026-11-03 20:26 (above). Commit the fork, then the repo.
-3. **l** (below), not started. Found in k for it: on the PS4 the first-launch profile screen took Cross as Enter
+3. ~~**l**~~ passed 2026-11-03 22:09 (below, "l PASSED"; the pad needed the title's wake, "The cause"). Next: the
+   ps5drv patch, then m. Found in k for it: on the PS4 the first-launch profile screen took Cross as Enter
    (the k preset), so the name screen is no blocker in keyboard mode; in xinput mode it still needs l's key edges.
 4. **Open from k:**
    - frame rate: fps_avg 37-58 and fps_low_1pct 10-42 a 10 s window at the camp and the menu, the user saw 10-60
@@ -975,6 +976,181 @@ tell).
 
 **Stop point S5.** If the game never reads XInput (`pad_reads=0` with the pad connected at start), stop. The fallback is
 plan g's keyboard mapper with a Psychonauts preset (DS4 → keys); decide it with the user.
+
+**l as built (2026-11-03, fixed before the first l launch).** Planned in the session's plan file and reviewed by
+the user, who changed three things: Enter is not on Cross, there is no Escape, and the restart check compares
+binding lines rather than whole files. The trigger rest values are recorded.
+
+**Joy9 is Options, from the EXE.** `Psychonauts.exe` 0x406332-0x4064ed reads XInput (`XINPUT1_3.dll` ordinal 2,
+called through the thunk at 0x6ecd8a) and sets one state code per button (0x405470). The game's own name table
+(`0x782820 + code*4`, filled at 0x404700, read by the key-name lookup 0x405b90) names 0x118 "Joy1" up to 0x123
+"Joy12". With `pw_wine_game_pad`'s mapping and the Defaults pad column:
+
+| Action | Joy | Code | XInput | DS4 |
+|---|---|---|---|---|
+| Attack | Joy1 | 0x118 | X | Square |
+| Jump | Joy2 | 0x119 | A | Cross |
+| Cancel | Joy3 | 0x11a | B | Circle |
+| Use | Joy4 | 0x11b | Y | Triangle |
+| LockOn/Float | Joy5 | 0x11c | LT (any value > 0, `setg`) | L2 |
+| PsiPower1 | Joy6 | 0x11d | RT (any value > 0) | R2 |
+| PsiPower2 | Joy7 | 0x11e | RB | R1 |
+| PsiPower3 | Joy8 | 0x11f | LB | L1 |
+| Journal | Joy9 | 0x120 | Start | Options |
+| (none) | Joy10 | 0x121 | Back | touchpad left half |
+| Stats | Joy11 | 0x122 | LS | L3 |
+| FirstPerson | Joy12 | 0x123 | RS | R3 |
+
+The d-pad is 0x114-0x117 (DPadUp, Down, Left, Right).
+
+**Where Enter goes.** The other reads of these codes in the EXE (`push imm32`):
+- A: a second use at 0x519261;
+- Start: a second use at 0x519620;
+- Back: only the XInput read (0x4063d3).
+
+Enter on Cross could therefore confirm two screens with one press, and Escape on Options could open and close the
+Journal at once. So:
+- **Enter is on the touchpad's left half.** The game also gets Back (Joy10) there, which nothing binds or reads.
+- **There is no Escape.** Circle cancels in the menus.
+- **Nothing else posts a key.**
+
+**Fork (title only, runtime unchanged):**
+- `src/pw_game_profile`: a new input key, `touchpad_left = <key>`. It is a plain key or mouse button, once per file,
+  outside `bindings[]` so the title's clearing of the touchpad entry leaves it, and copied by the overlay. Tested in
+  `test_pw_game_profile` (`test_touchpad_left`).
+- `native/orbis/pw_xinput_feed_orbis.{c,h}`: the feed's step after each `pw_pad_ps5_read`.
+  - **Controller 0** gets `pw_wine_game_pad`'s state, with Guide (the right half) stripped.
+  - **The mark:** the right half's release, counted only while the pad is readable.
+  - **Keys:** edges for `touchpad_left` on the left half, and `bindings[]` edges for the other buttons. They follow
+    the buttons the step fed, so interception, a disconnect or a failed read releases them.
+  - **`lt_min`/`rt_min`:** the lowest L2/R2 while readable.
+  - Tested in `tests/test_pw_xinput_feed_orbis.c`, through the DS4 converter and the real pad core.
+- `pw_milestone_orbis.c`:
+  - **The feed.** `pw_ms_xinput_start` loads the keys with `x_bindings`: the preset file under the profile's
+    `[input]` lines, and no built-in keys (g's are Bloodlines'). It also looks up `pw_wine_pads_wanted` and records
+    `pad_connected_at_start`. `xinput_feed` posts the step's keys through `post()`, and its mark calls `g_mark` in
+    the g/k/l plans.
+  - **Plan `l`.** `k_stages`, Psychonauts, `l_lines`. `g_plan()` covers it, and `psy_plan()` = k or l: the profile
+    default and the 10 s `k fps` windows.
+  - **`g_script` in xinput mode** opens and reads no pad: the feed is the only reader. The USB keyboard and mouse
+    still count `kbm`.
+  - **The line** at the first mark (`exit=running`), else at the session's end:
+    `PS4WINE l psychonauts input pad_connected_at_start pad_reads(pads_wanted&1, - without the look-up) kbm faults_unresolved exit`.
+    Then recorded fields:
+    - `marks lt_min rt_min trigger_samples xinput pad_open feed_reads pad_packets pad_buttons keys_posted`
+      `touchpad_left_downs bindings pad_rumbles pad_rumbles_on vibration_rc pad_intercepted pad_disconnected`;
+    - `presents exe_base audio grains_nonzero audio_errors cpu profile kbd mouse flex_mib_*`, dmem, and the last
+      10 s window;
+    - `eboot_release`.
+- `tools/build_native_orbis.sh` compiles the new file into the title.
+
+**Repo:**
+- `profiles/psychonauts.ini`: `[input] mode = xinput`, `preset = psychonauts`.
+- `profiles/input/psychonauts.input`: `mode = xinput`, `touchpad_left = enter`.
+- k's keys are kept as `profiles/input/psychonauts-keys.input` (S5's fallback; game.sh uploads only `<id>.input`).
+- `check.sh l` (the rule above, verbatim), with 9 fixtures in `tests/check_psy_test.sh`:
+  - pass;
+  - `pad_reads=0` (S5), `pad_reads=-`;
+  - `kbm=2`;
+  - not connected at start;
+  - keyboard mode;
+  - no mark (`exit=fault`);
+  - an unresolved fault;
+  - NOLOG.
+- `tests/profile_parse.c` prints the profile's `mode` and a preset's `bound` count and `touchpad_left`.
+  `profile_parse_test.sh` requires xinput with `vk:0x0d` and nothing else bound.
+- **`scripts/ps4/psy-bindings.sh`** (`tests/psy_bindings_test.sh`): the restart check over the `[Input]` lines only.
+  - With one file, the pad column is compared with the Defaults of session C. The Defaults hold arrow-key names in
+    `Move*_Alt`, so "no keyboard name" could not be the test.
+  - With two files, it diffs them.
+  - On j's snapshots: after-C, D and E are the same, and before-C shows the mangled column.
+
+**Tests (2026-11-03, each result read from its output):**
+- fork `make test`: `exit 0`, with `test_pw_game_profile` and `test_pw_xinput_feed_orbis` passing;
+- `build.sh probe-test`: exit 0;
+- `build.sh title`: gates passed, `dist/ps4-wine-efdfeae+dirty.pkg`.
+
+**Not rerun:** the runtime is unchanged, so g1n/g1m/g1/e/g2 are not rerun (the user's instruction). Each l LOG line
+says so:
+- **g2 not rerun:** `g_plan` and `g_script` changed, and g2 goes through both (the change is gated on xinput mode).
+- **l1 not rerun on the console:** the refactored `xinput_feed` is its path; only the host tests cover it.
+
+**l on the console, 2026-11-03 21:03-21:49 (LOG, four launches): the pad was ignored until something posted input.**
+- **Launch 1** (21:03). At first the pad did nothing. Then 4 keyboard events arrived (21:04:24, HID usage 0x2c,
+  Space; the user touched no keyboard), and from then on everything worked: menus, walking, jumping, the camera.
+  `kbm=4` failed the rule.
+  - The Journal's Options page is mouse-driven (a hand pointer). The pad can't move it; Circle leaves it.
+  - The profile was unchanged after the launch (the same 42 binding lines, byte-identical).
+- **Launch 2** (21:32) only closed the cycle. Closing a title from the PS menu records the game stage as
+  `stopped=psychonauts:crash`, so the next launch emits an empty line and ends the cycle. Before each launch,
+  `/data/ps4-wine/l/progress.txt` is moved aside over FTP (renamed, never deleted).
+- **Launch 3** (21:33): `check.sh l` PASS, yet the pad did nothing (the user's word). `pad_reads=1` is the game's one
+  ungated read at startup (0x402a4e), so it cannot catch a dead pad. The user's word gates l until a per-frame read
+  count comes with the ps5drv patch (fixed before that run).
+- **Launch 4** (21:38, `WINEDEBUG=+loaddll,+win`): the trace stalled the game at DXVK's fullscreen switch, so no
+  frame. `+win` is not to be used again for this game.
+
+**The cause** (the EXE, win32u, launch 4's trace; the user's review added the `show_window` step):
+- The game reads XInput per frame only when `GetForegroundWindow()` is its window: 0x4062e6 → 0x465440 compares
+  with 0x786a70, otherwise E_FAIL.
+- Its window 0x10030 is created without `WS_VISIBLE`. DXVK shows it with
+  `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE|SWP_FRAMECHANGED|SWP_SHOWWINDOW)`.
+- The game's own `ShowWindow(SW_SHOWDEFAULT)` at 0x465ce0 comes after that. `show_window` returns at
+  `if (was_visible) goto done` (`window.c:5053`), so nothing activates the window.
+- ps5drv makes the newest shown window foreground only in `ProcessEvents`, which win32u calls only when `QS_DRIVER`
+  is set (`message.c:3348`), i.e. after the title has posted input.
+- On the laptop, the X11 window manager activates the window. In k, every pad action was a posted key.
+
+**The fix, in two steps (the user's choice):**
+1. **Now (title only):** the feed's step adds a mouse move of (0,0) once a second (`PW_XINPUT_FEED_WAKE_US`). The
+   driver's first one centres the pointer, and later ones send nothing; the game itself `SendInput`s a zero move at
+   0x46542c. The l line records `wakes=`. `test_pw_xinput_feed_orbis` covers it: over 2.5 s of an idle pad, three
+   wakes and nothing else (no key, no button, no motion). `kbm` counts only the USB keyboard's and mouse's events,
+   so it stays 0.
+2. **Later (its own step):** a fork Wine patch in ps5drv activates a newly shown top-level window when nothing is
+   foreground, followed by its regressions and a per-frame read count fixed before that run. The title wake is
+   removed once it lands.
+
+**Tests for the wake:** fork `make test` (read: `make test exit 0`), and `build.sh title` (exit 0, the title of 21:48,
+uploaded 21:49).
+
+**l PASSED (2026-11-03 22:09, LOG; the title of 21:48, `efdfeae+dirty` with the wake; runtime unchanged since k).**
+- **Launch 5** (22:01): `check.sh l` PASS (`kbm=0`, `wakes=155`).
+  - The user's word: the pad worked from the first screen, the menus, Raz walking, jumping and turning the camera,
+    and rumble felt (`pad_rumbles_on=26`).
+  - The Save Game page shows the game's own A/B prompts.
+- **Launch 6** (22:06, the restart check): PASS (`wakes=162`, `pad_rumbles_on=134`).
+  - The user's word: the same bindings, everything worked from the start, and a save loaded correctly.
+  - The profile is byte-identical to the one before l (psy-bindings.sh: the same 42 binding lines, the pad column the
+    Defaults).
+- **Evidence** (the full recordings were deleted after the clips were cut):
+  - `logs/20261103-220035-l-5-savegame.{mkv,wav,png}`;
+  - `logs/20261103-220553-l-6-gameplay.{mkv,wav,png}`;
+  - `logs/20261103-210209-l-1-options-page.{mkv,wav,png}`.
+- **Recorded, not gated:**
+  - 11 syscall faults at `ntdll.prx+0x2dced` every launch (k's `+0x2dc3d`, presumably shifted by the ntdll with 1150);
+  - `fps_low_1pct` 4.0-55.6 across the launches, with `fps_avg` ~60 in the 10 s windows;
+  - `lt_min=rt_min=0`;
+  - the name screen (Enter on the touchpad's left half) was not tested: the console already had k's profile.
+- **Not rerun:** g2 (g_plan/g_script changed, gated on xinput mode) and l1 on the console (its feed was refactored,
+  and now wakes).
+
+**Next, in order (after the user commits fork and repo):**
+1. **The ps5drv patch** (fork Wine, its own step):
+   - activate a newly shown top-level window when nothing is foreground;
+   - a per-frame XInput read count in the l line, fixed before that run (so `pad_reads` can catch a dead pad);
+   - g1n/g1m/g1/e/g2 on it, then an l launch;
+   - then the title's wake is removed.
+2. **m** (gameplay, 300 s, `fps_avg>=30`).
+
+**Open from l:**
+- **The Journal's Options page** is mouse-driven, so the pad cannot use it. An idea: the touchpad as a trackpad
+  (finger motion moves the pointer, the left half clicks).
+- **`+win` stalls this game** at DXVK's fullscreen switch. A trace there needs a narrower channel.
+- **After a close from the PS menu,** the next launch only ends the plan's cycle. Move `<root>/<plan>/progress.txt`
+  aside before a launch that must run Wine.
+- **Two loggers from the afternoon's l1 runs** (labels l1b and l1c, another session) were still running at 21:15 and
+  share klog. They were left alone.
 
 **Commit** fork and repo after l passes (the user commits).
 

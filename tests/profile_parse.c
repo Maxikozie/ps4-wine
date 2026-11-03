@@ -71,6 +71,7 @@ static int parse_ini(const char *path)
         printf("env=%s=%s\n", profile.debug_env[i].name, profile.debug_env[i].value);
     printf("cpu_native=%d\n", pw_game_cpu_native(&profile));
     printf("saves=%s\n", profile.runtime.saves);
+    printf("mode=%s\n", (profile.input.set & 1u) ? profile.input.mode == PW_GAME_INPUT_XINPUT ? "xinput" : "keyboard" : "");
     return 0;
 }
 
@@ -90,6 +91,17 @@ static int parse_input(const char *path)
     }
     printf("OK %s\n", path);
     printf("mode=%s\n", input.mode == PW_GAME_INPUT_XINPUT ? "xinput" : "keyboard");
+    {
+        /* The buttons the file binds (bindings[], layer and hold), and touchpad_left (milestone l). */
+        unsigned bound = 0;
+        for (size_t i = 0; i < PW_GAME_BUTTON_COUNT; i++)
+            bound += (input.bindings[i].kind != PW_GAME_BIND_UNSET) + (input.layer_bindings[i].kind != PW_GAME_BIND_UNSET) +
+                     (input.hold_bindings[i].kind != PW_GAME_BIND_UNSET);
+        printf("bound=%u\n", bound);
+        if (input.touchpad_left.kind == PW_GAME_BIND_KEY) printf("touchpad_left=vk:0x%02x\n", input.touchpad_left.code);
+        else printf("touchpad_left=%s\n", input.touchpad_left.kind == PW_GAME_BIND_MOUSE ? "mouse" :
+                                         input.touchpad_left.kind == PW_GAME_BIND_NONE ? "none" : "");
+    }
     return 0;
 }
 

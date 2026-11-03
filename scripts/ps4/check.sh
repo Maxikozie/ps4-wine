@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -115,6 +115,10 @@ k is Psychonauts' main menu on the PS4 with sound (fixed 2026-11-03 before the f
 first mark), exe_base=0x00400000, eboot_release=ok, audio=on, grains_nonzero>=10, audio_errors=0,
 faults_unresolved=0, exit=running, and p5's HDMI audio rule over the menu window (--audio WAV --audio-window S:D,
 mean >= -30 dB, or --no-audio); its HDMI frame of the menu is evidence, not checked.
+l is the DS4 in Psychonauts as XInput controller 0 (fixed 2026-11-03 before the first l run): input=xinput,
+pad_connected_at_start=1, pad_reads>=1 (the game read controller 0: the sink's pads_wanted, bit 0), kbm=0 (no
+USB keyboard or mouse event), faults_unresolved=0, exit=running (the user's first mark); plus the user's word
+on the menus, Raz walking, jumping and turning the camera, and the same bindings on a second launch.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
 USAGE
@@ -137,7 +141,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ] || [ "$MS" = k ]; then
     if [ "$MS" = p5 ]; then AUDIO_WHAT="the tail's window"; else AUDIO_WHAT="the menu window"; fi
@@ -181,7 +185,7 @@ if [ -z "$LINE" ]; then
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
           "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ||
-          "$MS" == i1 || "$MS" == i || "$MS" == l1 || "$MS" == k ]]; then
+          "$MS" == i1 || "$MS" == i || "$MS" == l1 || "$MS" == k || "$MS" == l ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -375,6 +379,9 @@ case "$MS" in
     k) word psychonauts; req menu eq 1; req exe_base eq 0x00400000; req eboot_release eq ok; req audio eq on
        req grains_nonzero ge 10; req audio_errors eq 0; req faults_unresolved eq 0; req exit eq running
        audio_rule ;;
+    # l: fixed 2026-11-03 before the first l run (docs/ps4/HANDOFF-i.md); plus the user's word, two launches.
+    l) word psychonauts; req input eq xinput; req pad_connected_at_start eq 1; req pad_reads ge 1; req kbm eq 0
+       req faults_unresolved eq 0; req exit eq running ;;
     j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
        req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

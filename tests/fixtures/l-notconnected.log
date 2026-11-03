@@ -1,0 +1,8 @@
+# synthetic fixture, written 2026-11-03 before the first l launch (format of logs.sh: HH:MM:SS N|K text)
+10:00:00 N PW_MS start plan=l exe=C:\Psychonauts\Psychonauts.exe stages=0/5 stopped=- launches=1 resumed=- file=/data/ps4-wine/l/progress.txt
+10:00:01 N PW_MS stage=cpu_probe cpu_probe=native native_caps=7
+10:00:01 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+10:00:02 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2
+10:00:02 N PW_MS stage=audio audio=ok
+10:00:03 N PW_MS stage=xinput xinput=on set_pad=1 rumble=1 pads_wanted=1 pad_open=0 pad_handle=3 user=268435457 bindings=file touchpad_left=key
+10:03:20 N PS4WINE l psychonauts input=xinput pad_connected_at_start=0 pad_reads=1 kbm=0 faults_unresolved=0 exit=running marks=1 lt_min=0 rt_min=0 trigger_samples=48210 xinput=on pad_open=0 feed_reads=48400 pad_packets=9120 pad_buttons=0xf3ff keys_posted=2 touchpad_left_downs=1 bindings=file pad_rumbles=14 pad_rumbles_on=7 vibration_rc=0x0 pad_intercepted=0 pad_disconnected=0 pad_events=0 faults_unhandled=0 presents=11200 exe_base=0x00400000 audio=on grains_nonzero=31000 audio_errors=0 cpu=native profile=psychonauts profile_status=ok dxvk_oom=0 kbd=ok mouse=ok flex_mib_start=432 flex_mib_min=170 dmem_peak_mib=280 dmem_low_peak_mib=237 fps_avg=55.2 presents=552 window_s=10 eboot_release=ok low_end=0x404000 build=abc1234+dirty stages=4/5 stopped=- launches=1 resumed=- session_s=200

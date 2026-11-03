@@ -1,0 +1,7 @@
+# synthetic fixture, written 2026-11-03 before the first l launch (format of logs.sh: HH:MM:SS N|K text)
+10:00:00 N PW_MS start plan=l exe=C:\Psychonauts\Psychonauts.exe stages=0/5 stopped=- launches=1 resumed=- file=/data/ps4-wine/l/progress.txt
+10:00:01 N PW_MS stage=cpu_probe cpu_probe=native native_caps=7
+10:00:01 N PW_MS stage=wow_bind wow_load=ok wow_bound=19/19 wow_first=- wow_hook=bound wow_sym=1
+10:00:02 N PW_MS stage=display display=ok vo_register=ok vo_size=1920x1080 vo_pitch=1920 vo_format=a8r8g8b8 vo_buffers=2
+10:00:02 N PW_MS stage=audio audio=ok
+10:00:03 N PW_MS stage=xinput xinput=on set_pad=1 rumble=1 pads_wanted=1 pad_open=0 pad_handle=3 user=268435457 bindings=file touchpad_left=key

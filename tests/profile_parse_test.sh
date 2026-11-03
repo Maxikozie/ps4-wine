@@ -74,6 +74,7 @@ for f in "${inis[@]}"; do
         want winedebug ''
         want cpu_native 1
         want saves 'C:\Psychonauts\Profiles'
+        want mode xinput
         printf '%s\n' "$out" | grep -qx 'env=DXVK_CONFIG_FILE=C:/Psychonauts/dxvk.conf' ||
             bad+=" env lacks DXVK_CONFIG_FILE=C:/Psychonauts/dxvk.conf"
         printf '%s\n' "$out" | grep -qx 'env=DXVK_HUD=fps,frametimes' || bad+=" env lacks DXVK_HUD=fps,frametimes"
@@ -93,6 +94,17 @@ for f in "${inputs[@]}"; do
         fail "$rel: ${out#FAIL "$f": }"
         continue
     fi
+    case "$(basename "$f")" in
+        psychonauts.input)
+            # Milestone l (docs/ps4/HANDOFF-i.md): xinput, Enter on the touchpad's left half, nothing else.
+            [ "$(field "$out" mode)" = xinput ] && [ "$(field "$out" touchpad_left)" = vk:0x0d ] &&
+                [ "$(field "$out" bound)" = 0 ] || {
+                fail "$rel: mode=$(field "$out" mode) touchpad_left=$(field "$out" touchpad_left) bound=$(field "$out" bound) (want xinput, vk:0x0d, 0)"
+                continue
+            } ;;
+        psychonauts-keys.input)
+            [ "$(field "$out" mode)" = keyboard ] || { fail "$rel: mode=$(field "$out" mode) (want keyboard)"; continue; } ;;
+    esac
     printf 'OK   %s (%s)\n' "$rel" "$(field "$out" mode)"
 done
 

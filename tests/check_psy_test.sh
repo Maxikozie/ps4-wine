@@ -22,8 +22,13 @@ the stick's silent level, about -37 dB mean, fails): Psychonauts' menu at the fi
 WAV, fails with the quiet one, is "PASS (no audio)" with --no-audio and refused without an audio option; it
 fails without the mark (menu=0, exit=crash), with the EXE at 0x10000000, with the eboot kept
 (eboot_release=off), with audio=fail, with 3 non-silent grains, with 2 audio errors and with an unresolved
-fault; stage records without a line are NOLOG naming them, and with an exception CRASH naming them. The
-fixtures for l, m and n join these before their first launches.
+fault; stage records without a line are NOLOG naming them, and with an exception CRASH naming them.
+Then check.sh l on tests/fixtures/l-*.log (synthetic: written 2026-11-03 before the first l launch): the DS4 as
+XInput controller 0 passes with input=xinput, the pad connected at start, the game's read (pad_reads=1), kbm=0,
+no unresolved fault and exit=running; it fails with pad_reads=0 (stop point S5) and with pad_reads=- (no
+look-up), with 2 keyboard or mouse events, with the pad not connected at start, in keyboard mode, without the
+mark (exit=fault) and with an unresolved fault; stage records without a line are NOLOG. The fixtures for m and
+n join these before their first launches.
 Exit 0 when every case matches.
 USAGE
 }
@@ -77,6 +82,16 @@ case_ k k-audioerr.log     1 FAIL  "audio_errors=2 != 0" --no-audio
 case_ k k-unresolved.log   1 FAIL  "faults_unresolved=1 != 0" --no-audio
 case_ k k-stagesonly.log   1 NOLOG "no 'PS4WINE k' line in k-stagesonly.log; stage records: cpu_probe,wow_bind,display" --no-audio
 case_ k k-crash.log        1 CRASH "stage records: cpu_probe,wow_bind,display,audio,psychonauts" --no-audio
+
+case_ l l-pass.log         0 PASS  "pad_reads=1"
+case_ l l-noreads.log      1 FAIL  "pad_reads=0 < 1"
+case_ l l-nolookup.log     1 FAIL  "pad_reads=- < 1"
+case_ l l-kbm.log          1 FAIL  "kbm=2 != 0"
+case_ l l-notconnected.log 1 FAIL  "pad_connected_at_start=0 != 1"
+case_ l l-keyboard.log     1 FAIL  "input=keyboard != xinput"
+case_ l l-crashed.log      1 FAIL  "exit=fault != running"
+case_ l l-unresolved.log   1 FAIL  "faults_unresolved=1 != 0"
+case_ l l-stagesonly.log   1 NOLOG "no 'PS4WINE l' line in l-stagesonly.log; stage records: cpu_probe,wow_bind,display,audio,xinput"
 
 # parse_ <fixture> <session seconds> <expected output of host-game.sh --parse>
 parse_() {

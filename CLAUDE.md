@@ -79,6 +79,7 @@ console run), `docs/ps4/RESEARCH.md`. `refs/` holds read-only reference checkout
 | `runtime.sh` | stages the Wine runtime (fork PRXs + host Wine PE modules + nls) under `build/runtime/win/wine` and mirrors it to `/data/ps4-wine/runtime` over FTP (`--prx-only` for a Wine iteration; PRXs get mode 777) |
 | `game.sh` | Bloodlines (UP 11.5, `games/bloodlines-up`, read only) to `C:\VTMB` of the console's prefix with its profile and DS4 preset (`profiles/`), mirror resumable, every file's size verified; `--saves-push/--saves-pull` |
 | `host-game.sh` | Bloodlines on the laptop under the desktop Wine (`build/host-game/vtmb` reflink copy, `build/prefix-desktop`, DXVK x32 d3d9, batching on); `--census`, `--no-hud`, `--saves-out`. `--game psychonauts` (j): own prefix `build/prefix-desktop-psychonauts` with the copy in its `drive_c/Psychonauts`, the DS4 as XInput 0 through the fork's `host_pad_evdev.so`, the j line and a census of written files at exit; `--debug`, `--parse LOG`; `--test [--seconds N]` uses `build/host-test/` (the tester's runs; never the user's copy) |
+| `psy-bindings.sh` | Psychonauts' profile INI: its `[Input]` binding lines against the Defaults pad column (one file), or two files' binding lines compared (milestone l's restart check) |
 | `prefix.sh` | `wineboot --init` with the fork's host Wine into `build/prefix` (dosdevices and builtin DLL copies removed, `hello.exe` added), upload to `/data/ps4-wine/prefix` |
 
 The loop for one console run: `logs.sh --label X &` (klog has no history, so

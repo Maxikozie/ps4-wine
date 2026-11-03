@@ -1,36 +1,23 @@
-; Psychonauts' menus on the DS4 (milestone k, docs/ps4/HANDOFF-i.md): keyboard mode, temporary until milestone l
-; switches the profile to xinput (the game's own pad support). The menus take the arrow keys, Enter and Escape;
-; the first launch's new-profile screen (the bunk bed and the name) takes only Enter and Esc. The laptop run of
-; milestone j found the menus wanting Space once the pad's bindings were lost, so triangle sends Space as a
-; second confirm. Gameplay is not laid out here: no movement or camera keys until l.
+; Psychonauts on the DS4 (milestone l, docs/ps4/HANDOFF-i.md): xinput mode. The title gives the DS4 to the game
+; as XInput controller 0 (pw_wine_game_pad's mapping), and the game's own pad bindings do the rest. With the
+; game's Defaults (Options, Bindings), read from Psychonauts.exe's XInput read at 0x406332 and its name table
+; at 0x782820 + code*4:
 ;
-;   up down left right  the arrow keys    move through the menus
-;   left stick          the arrow keys    the same, as four held keys past a 40% push
-;   cross               enter             confirm (and the name screen)
-;   circle              escape            back (and the name screen)
-;   options             escape            back, the game's menu
-;   triangle            space             confirm, as the menus took it on the laptop
-;   right stick                           the mouse pointer
-;   r2 / r1             mouse_left / mouse_right
-;   touchpad                              the title's marks (the title keeps it unbound): a tap marks the menu
-;   create (Share)                        unbound: the PS4 system takes it for its share menu
+;   square    Joy1  X      Attack            l2  Joy5  LT   LockOn/Float (any trigger value above 0)
+;   cross     Joy2  A      Jump              r2  Joy6  RT   PsiPower1
+;   circle    Joy3  B      Cancel            r1  Joy7  RB   PsiPower2
+;   triangle  Joy4  Y      Use               l1  Joy8  LB   PsiPower3
+;   options   Joy9  Start  Journal           l3  Joy11 LS   Stats
+;   touchpad left half  Joy10 Back (unbound) r3  Joy12 RS   FirstPerson
+;   touchpad right half       the title's mark, never given to the game
+;   d-pad left/right          InventoryMenu / PsiPowersMenu; the sticks walk and turn the camera
+;
+; One key is posted beside the pad: Enter, on the touchpad's left half, for the first launch's new-profile
+; screen (the bunk bed and the name), which takes Enter from the keyboard and nothing from the pad. Not on
+; cross or options: the EXE also reads A (0x519261) and Start (0x519620) directly, so Enter on cross could
+; confirm two screens with one press, and Escape on options could open and close the Journal at once. Back
+; (0x121) is read nowhere but the XInput read and no default binds Joy10, so the left half does one thing.
+; No Escape: circle cancels in the menus.
 [input]
-mode = keyboard
-mouse = right_stick
-mouse_speed = 600
-keyboard_stick = left_stick
-stick_deadzone = 40
-stick_up = up
-stick_down = down
-stick_left = left
-stick_right = right
-up = up
-down = down
-left = left
-right = right
-cross = enter
-circle = escape
-options = escape
-triangle = space
-r2 = mouse_left
-r1 = mouse_right
+mode = xinput
+touchpad_left = enter
