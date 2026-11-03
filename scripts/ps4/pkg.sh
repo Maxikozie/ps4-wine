@@ -22,13 +22,15 @@ usage: scripts/ps4/pkg.sh --elf FILE [options]
   --assets DIR       copied into the package as assets/ (mounted at /app0/assets); create-gp4
                      accepts only a few root folders, keep everything under assets/
   --icon FILE        512x512 24-bit PNG without alpha (default: assets/icon0.png, Wine's logo)
+  --prx FILE         an fSELF'd app PRX copied to sce_module/ (mounted at /app0/sce_module);
+                     repeatable (milestone i: the stub eboot loads the title from there)
   --out DIR          output directory (default dist/)
   --stage DIR        staging directory (default build/pkg/NAME)
   --dry-run          print the tool commands without running them (automatic when tools are missing)
 USAGE
 }
 
-ELF=""; NAME=""; ASSETS=""; ICON=""; OUT="$DIST_DIR"; STAGE=""; VERSION="01.00"; DRY=0
+ELF=""; NAME=""; ASSETS=""; ICON=""; OUT="$DIST_DIR"; STAGE=""; VERSION="01.00"; DRY=0; PRXS=()
 TID="$TITLE_ID"; TNAME="$TITLE_NAME"; CID=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -40,6 +42,7 @@ while [ $# -gt 0 ]; do
         --version) VERSION="$2"; shift 2 ;;
         --assets) ASSETS="$2"; shift 2 ;;
         --icon) ICON="$2"; shift 2 ;;
+        --prx) PRXS+=("$2"); shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --stage) STAGE="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
@@ -89,6 +92,14 @@ ICON="${ICON:-$REPO_ROOT/assets/icon0.png}"
 run cp "$ICON" "$STAGE/sce_sys/icon0.png"
 
 FILES="eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/about/right.sprx sce_module/libc.prx sce_module/libSceFios2.prx"
+
+# 3b. app PRXs next to the samples' system modules
+for prx in "${PRXS[@]}"; do
+    case "$(basename "$prx")" in libc.prx|libSceFios2.prx) die "--prx $prx would replace a samples-layout module" ;; esac
+    [ "$DRY" = 1 ] || [ -f "$prx" ] || die "no such PRX: $prx"
+    run cp "$prx" "$STAGE/sce_module/"
+    FILES="$FILES sce_module/$(basename "$prx")"
+done
 
 # 4. assets
 if [ -n "$ASSETS" ]; then

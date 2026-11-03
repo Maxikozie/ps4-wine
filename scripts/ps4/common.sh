@@ -19,6 +19,9 @@ CONTENT_ID="${CONTENT_ID:-IV0000-${TITLE_ID}_00-PS4WINE000000000}"
 # Milestone b's triangle has its own title, so installing it leaves the probe (and later Wine) in place.
 TRIANGLE_TITLE_ID="${TRIANGLE_TITLE_ID:-PSWN00002}"
 TRIANGLE_TITLE_NAME="${TRIANGLE_TITLE_NAME:-ps4-wine triangle}"
+# Milestone i1's low-base probe has its own title too: the installed Wine title and its data stay.
+LOWBASE_TITLE_ID="${LOWBASE_TITLE_ID:-PSWN00003}"
+LOWBASE_TITLE_NAME="${LOWBASE_TITLE_NAME:-ps4-wine lowbase}"
 
 # Host paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

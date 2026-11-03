@@ -137,10 +137,34 @@ static void test_frame(void)
     CHECK( pr_find_u64( (const uint8_t *)"\x01\0\0\0\0\0\0\0", 8, 1, 1 ) == -1 );
 }
 
+/* The i1 line: gated fields first, then the recorded ones, build last; "-" for what was not
+ * measured. netlog carries it whole; klog keeps 512 bytes of a line, so the gated part (up to
+ * faults_unresolved) must fit there even with every field at a long value. */
+static void test_i1_line(void)
+{
+    struct pr_results r;
+    char buf[1536];
+    int i, n;
+
+    pr_init( &r );
+    pr_set( &r, "direct_mib", "4464" );
+    pr_set( &r, "release", "ok" );
+    pr_set( &r, "launches", "2" );
+    CHECK( pr_format_i1_line( &r, "abc1234", buf, sizeof(buf) ) > 0 );
+    CHECK( !strncmp( buf, "PS4WINE i1 lowbase direct_mib=4464 release=ok reserve400=- ", 59 ) );
+    CHECK( strstr( buf, " launches=2 build=abc1234" ) && !strcmp( strstr( buf, " build=" ), " build=abc1234" ) );
+    CHECK( strstr( buf, " alive_s=- faults_unresolved=- segs=- " ) != NULL );
+    CHECK( pr_format_i1_line( &r, "x", buf, 30 ) == -1 );
+    for (i = 0; pr_i1_fields[i]; i++) pr_set( &r, pr_i1_fields[i], "err:0x80020016" );
+    n = pr_format_i1_line( &r, "0123456+dirty", buf, sizeof(buf) );
+    CHECK( n > 0 && strstr( buf, " segs=" ) && strstr( buf, " segs=" ) - buf < 512 - 32 );
+}
+
 int main(void)
 {
     test_results();
     test_line();
+    test_i1_line();
     test_progress();
     test_frame();
     if (failures) { printf( "probe_util_test: %d failure(s)\n", failures ); return 1; }

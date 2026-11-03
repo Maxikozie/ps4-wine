@@ -1,0 +1,19 @@
+# synthetic fixture, written before the first i1 launch (format of logs.sh: HH:MM:SS N|K text)
+01:00:00 K <118>[Syscore App] PS4WINE lowbase stub build=abc1234 argc=0 tls_room=16
+01:00:00 K <118>[Syscore App] PS4WINE lowbase stub: entering lowbase.prx; this eboot is not resumed
+01:00:00 K <118>[Syscore App] [   0.002] PS4WINE lowbase start build=abc1234 launch=1 argc=0 argv0=-
+01:00:00 N [   0.010] PW_MS stage=direct direct_mib=4464
+01:00:01 N [   0.300] PW_MS stage=vo1 vo1=ok
+01:00:01 N [   0.310] PW_MS stage=release release=ok
+01:00:01 N [   0.311] PW_MS stage=reserve400 reserve400=ok
+01:00:01 N [   0.320] PW_MS stage=exec400 exec400=ok
+01:00:02 N [   1.100] PW_MS stage=vo2 vo2=ok
+01:00:02 N [   1.300] PW_MS stage=sysmod sysmod=ok
+01:00:02 N [   1.400] PW_MS stage=pad pad=ok
+01:00:02 N [   1.500] PW_MS stage=prx prx=ok
+01:00:02 N [   1.600] PW_MS stage=threads threads=ok
+01:00:02 N [   1.610] PW_MS stage=unwind unwind=ok
+01:00:02 N [   1.620] PW_MS stage=sigsegv fault=ok
+01:00:02 N [   1.700] PW_MS stage=audio audio=ok
+01:00:12 N [  11.700] PW_MS stage=alive alive_s=10 submitdone=0x00000000
+01:10:02 N PS4WINE i1 lowbase direct_mib=4464 release=ok reserve400=ok exec400=ok vo2=ok prx=ok threads=ok tls=ok fault=ok alive_s=600 faults_unresolved=1 segs=4 low_end=0x4fc000 module0_after=listed:4 sysmod=ok kbd_open=err:0x80df0002 pad=ok unwind=fault@0x9001234 submitdone=0 audio=ok pre_reserve=err:0x8002000c vo1=ok vo1_close=ok prx_sce=ok unwind_frames=3 unwind_eboot=0 launches=1 build=abc1234

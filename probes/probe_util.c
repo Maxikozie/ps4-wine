@@ -127,6 +127,35 @@ int pr_gate( const struct pr_results *r )
     return *end == 0 && end != d && mib >= 4000;
 }
 
+const char *const pr_i1_fields[] =
+{
+    "direct_mib", "release", "reserve400", "exec400", "vo2", "prx", "threads", "tls", "fault", "alive_s",
+    "faults_unresolved", "segs", "low_end", "module0_after", "sysmod", "kbd_open", "pad", "unwind",
+    "submitdone", "audio", "pre_reserve", "vo1", "vo1_close", "prx_sce", "unwind_frames", "unwind_eboot",
+    "launches", NULL
+};
+
+int pr_format_i1_line( const struct pr_results *r, const char *build, char *buf, size_t size )
+{
+    const char *v;
+    size_t len;
+    int i, n;
+
+    n = snprintf( buf, size, "PS4WINE i1 lowbase" );
+    if (n < 0 || (size_t)n >= size) return -1;
+    len = n;
+    for (i = 0; pr_i1_fields[i]; i++)
+    {
+        v = pr_get( r, pr_i1_fields[i] );
+        n = snprintf( buf + len, size - len, " %s=%s", pr_i1_fields[i], v ? v : "-" );
+        if (n < 0 || (size_t)n >= size - len) return -1;
+        len += n;
+    }
+    n = snprintf( buf + len, size - len, " build=%s", build );
+    if (n < 0 || (size_t)n >= size - len) return -1;
+    return (int)(len + n);
+}
+
 static int pr_prog_has( const char *prog, char what, const char *stage )
 {
     size_t sl = strlen( stage );

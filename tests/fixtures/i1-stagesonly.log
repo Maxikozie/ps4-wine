@@ -1,0 +1,10 @@
+# synthetic fixture, written before the first i1 launch (format of logs.sh: HH:MM:SS N|K text)
+01:00:00 K <118>[Syscore App] PS4WINE lowbase stub build=abc1234 argc=0 tls_room=16
+01:00:00 K <118>[Syscore App] PS4WINE lowbase stub: entering lowbase.prx; this eboot is not resumed
+01:00:00 K <118>[Syscore App] [   0.002] PS4WINE lowbase start build=abc1234 launch=1 argc=0 argv0=-
+01:00:00 N [   0.010] PW_MS stage=direct direct_mib=4464
+01:00:01 N [   0.300] PW_MS stage=vo1 vo1=ok
+01:00:01 N [   0.310] PW_MS stage=release release=ok
+01:00:01 N [   0.311] PW_MS stage=reserve400 reserve400=ok
+01:00:01 N [   0.320] PW_MS stage=exec400 exec400=ok
+01:00:02 K <118>[Syscore App] # exception: 0x8a (SIGSEGV) in thread main rip 0x7ffff1234

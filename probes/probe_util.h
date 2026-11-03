@@ -42,6 +42,13 @@ int pr_format_line( const struct pr_results *r, const char *build, char *buf, si
  * the screen colour; check.sh on the host stays the authority. */
 int pr_gate( const struct pr_results *r );
 
+/* ---- the PS4WINE i1 line (docs/ps4/HANDOFF-i.md, "i1, the probe") */
+/* The fields the i1 line carries, in order: the gated ones first, then the recorded ones. */
+extern const char *const pr_i1_fields[];
+/* "PS4WINE i1 lowbase direct_mib=... launches=N build=<build>" with "-" for a field not measured.
+ * Returns the length, or -1 if it did not fit. */
+int pr_format_i1_line( const struct pr_results *r, const char *build, char *buf, size_t size );
+
 /* ---- progress file: "B:<stage>" / "E:<stage>" / "DONE:all" lines */
 /* 1 when the stage began on an earlier launch and never ended (crashed or hung). */
 int pr_prog_crashed( const char *prog, const char *stage );
@@ -72,6 +79,7 @@ struct pr_frame_layout
 };
 
 /* FreeBSD amd64 mcontext offsets (sys/x86/include/ucontext.h). */
+#define PR_MC_RDI   8
 #define PR_MC_RAX   56
 #define PR_MC_ADDR  136
 #define PR_MC_RIP   160

@@ -31,6 +31,7 @@ and a row in the "Derived code" table below.
 | [alechurri/nx-on-orbis](https://github.com/alechurri/nx-on-orbis) | `11b2c65` (2026-10-07) | GPL-3.0-or-later | PS4 Pro port of Eden: memory/fault/JIT findings, the package layout that grants ~4.4 GiB, `probe/probe.c`, `package-eden.sh`. **Never copied into LGPL code** |
 | [OpenOrbis/OpenOrbis-PS4-Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain) | `0a1aaf9` (v0.5.4+2) | GPL-3.0 (link.x, `include/orbis`, crtlib.o, create-fself/create-gp4); LGPL-3.0 (PkgTool/LibOrbisPkg); MIT (musl crt); Apache-2.0 w/ LLVM exception (libc++) | The toolchain: clang target, `link.x`, `create-fself`, `create-gp4`, `PkgTool.Core`, sample `sce_module`/`right.sprx` files |
 | [leolobato/playden-ps5](https://github.com/leolobato/playden-ps5) | `7d688b3` (2026-10-29) | GPL-3.0-or-later | Conventions: FTP deploy with verify-and-rename, log collection, `THIRD_PARTY_NOTICES.md` format, prospero-win profile usage |
+| [plastikman/orbis-win](https://github.com/plastikman/orbis-win) | `2610706` (read only under `refs/orbis-win`) | LGPL-2.1-or-later (`LICENSING.md`: files without SPDX) | Row 16, the low base: the stub eboot that loads the title as a high PRX and the eboot release (`src/reloc-wine-app/stub.c`, `app_entry.c`); its findings (`docs/`). Its `build-relocatable-wine-ps4.sh` links `orbis-tls.ld` and is not used |
 
 ## Derived code in this repo
 
@@ -45,6 +46,9 @@ and a row in the "Derived code" table below.
 | `scripts/ps4/build.sh` (`build_triangle`) | orbis-porting-kit `cmake/ps4-openorbis.cmake` @ `213b0c3`; mesa-ps4 `build-support/orbis/tools/linkprobe.sh` @ `1a59cc1` | MIT | The title link line (orbis-tls.ld, --no-rosegment, whole-archive overlay + libc16 objects, whole-archive RADV) |
 | `scripts/ps4/runtime.sh` | prospero-win `tools/package_release.sh` @ `0e7b6b4` | LGPL-2.1-or-later | The `win/wine/lib/wine/{x86_64-unix,*-windows}` + `share/wine/nls` layout and the host-Wine exclusions |
 | `scripts/ps4/prefix.sh` | prospero-win `tools/pw_prefix.py` @ `0e7b6b4` | LGPL-2.1-or-later | What is stripped from a prefix before the upload and the size verification |
+| `probes/lowbase/stub.c` | orbis-win `src/reloc-wine-app/stub.c` @ `2610706` | LGPL-2.1-or-later | Milestone i1's stub eboot: load the PRX, find its descriptor, call the entry with argc/argv, idle on failure. The parse and the scan are the fork's `pw_wine_prx.c`, compiled in from the submodule |
+| `probes/lowbase/lowbase_rt.c` | `probes/probe.c` (logging, results, progress, screen), and through it nx-on-orbis `probe/probe.c` @ `11b2c65` lines 113-240, 470-623 and `frontend/menu/rom_menu.cpp` @ `11b2c65` lines 150-203 | GPL-3.0-or-later | Milestone i1's runtime inside lowbase.prx; the stage guard (a longjmp from a frame the handler builds) is ours |
+| `scripts/ps4/build.sh` (`build_lowbase`) | the fork's `tools/build_wine_orbis.sh` `ld_prx` | LGPL-2.1-or-later | The app PRX link flags (`-e module_start`, `prx_eh_frame.ld`, `--no-rosegment`, 16 KiB pages) |
 | `tests/fixtures/c-*.log` | the fork's `native/orbis/wine64_main_orbis.c` record format | LGPL-2.1-or-later | Synthetic logs for `check.sh c` |
 
 ## The fork: `third_party/prospero-win` (submodule, branch `orbis`)

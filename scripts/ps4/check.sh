@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -99,6 +99,9 @@ p5's underruns are the audio driver's (the fork's wine/wineps5, src/pw_audio_mix
 which a started stream's ring ran out, ended by more data while it was still started (silence inside a sound).
 j is the host's (Psychonauts on the laptop, docs/ps4/HANDOFF-i.md): host-game.sh --game psychonauts writes
 its line into logs/<ts>-host-psychonauts-j.log; a pass is "PASS (host)", and j gets no LOG.md line.
+i1 is the low-base probe (build.sh lowbase, title PSWN00003): direct_mib>=4000, release, reserve400, exec400, vo2,
+prx, threads, tls and fault ok, alive_s>=600, faults_unresolved=0. Its PW_MS stage=suspend record (the user's Home
+and back after the line) is recorded only and never part of the rule.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
 USAGE
@@ -121,7 +124,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -158,11 +161,13 @@ emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "
 if [ -z "$LINE" ]; then
     # RADV's and the winsys's own info lines explain faults without reporting one ("A write fault at
     # ring+N*32768 is offchip buffer N"), so they are not a crash.
-    FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | grep -v 'MESA: info:' | head -n1 || true)"
+    FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | grep -v 'MESA: info:' |
+                 { if [ "$MS" = i1 ]; then grep -vE 'PROBE |PW_MS stage=' || true; else cat; fi; } | head -n1 || true)"
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
-          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ]]; then
+          "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ||
+          "$MS" == i1 ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -327,6 +332,11 @@ case "$MS" in
     # g: fixed 2026-11-01 before the first g run (docs/ps4/HANDOFF-g.md: gameplay=1 is the user's mark).
     g) word vtmb; req batch eq 1; req gameplay eq 1; req crossings_per_frame le 2000; req fps_avg ge 20; req session_s ge 300; req faults_unresolved eq 0 ;;
     # j: fixed 2026-11-02 before the first j run (docs/ps4/HANDOFF-i.md); host only, plus the user's word.
+    # i1 (docs/ps4/HANDOFF-i.md, fixed 2026-11-02): the low-base probe; the suspend record (Home and
+    # back after the line) is never part of the rule.
+    i1) word lowbase; req direct_mib ge 4000
+        for k in release reserve400 exec400 vo2 prx threads tls fault; do req "$k" eq ok; done
+        req alive_s ge 600; req faults_unresolved eq 0 ;;
     j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
        req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

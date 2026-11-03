@@ -7,7 +7,7 @@ set -euo pipefail
 usage() {
     cat <<USAGE
 usage: scripts/ps4/build.sh --check-toolchain
-       scripts/ps4/build.sh <compat|mesa|probe|probe-test|triangle|wine|wine-desktop|title|all>
+       scripts/ps4/build.sh <compat|mesa|probe|probe-test|triangle|lowbase|wine|wine-desktop|title|all>
 
   --check-toolchain  report every host tool, SDK path and reference checkout the
                      port needs; exit 1 if a required one is missing
@@ -16,9 +16,11 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g, j, i1)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
+  lowbase            probes/lowbase/ (a stub eboot + lowbase.prx, which releases the eboot's segments)
+                     -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1)
   wine               Wine for the PS4 through the fork (third_party/prospero-win, branch orbis):
                      the host Wine (PE modules, nls, a wine for prefixes and host tests) and the
                      Orbis Unix side (ntdll.prx, wineserver.prx, win32u.prx + report.json)  (milestone c)
@@ -305,6 +307,115 @@ build_probe() {
     "$SCRIPT_DIR/pkg.sh" --elf "$out/probe.elf" --name probe --assets "$out/assets"
 }
 
+# probes/lowbase/ -> build/lowbase/{stub.elf, lowbase.prx, lowbase_mod.prx, lowbase_mod2.prx}
+# -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1, docs/ps4/HANDOFF-i.md).
+# The PRXs follow the fork's ld_prx recipe (third_party/prospero-win/tools/build_wine_orbis.sh
+# ld_prx: -pie --export-dynamic -e module_start, link.x plus prx_eh_frame.ld, --no-rosegment,
+# 16 KiB pages, a gen_prx_descriptor.py --orbis unit for module_start and the PRXDESC1 table).
+build_lowbase() {
+    local out="$BUILD_DIR/lowbase" oo="$OO_PS4_TOOLCHAIN" fork="$REPO_ROOT/third_party/prospero-win"
+    local bid cf=() f bad tls_mem tls_align fself n lib
+    [ -f "$ORBIS_COMPAT_BUILD/liborbis-compat.a" ] || die "build orbis-compat first: scripts/ps4/build.sh compat"
+    [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
+    [ -f "$fork/src/pw_eboot_release.c" ] || die "the fork has no src/pw_eboot_release.c"
+    bid="$(build_id)"
+    fself="$(oo_tool create-fself)" || die "create-fself not found under $oo"
+    # The title's flags without -femulated-tls: the title PRX (milestone i) has real (local-exec)
+    # thread-locals in the stub's block, and that path is what the probe measures.
+    mapfile -t cf < <(orbis_cflags | grep -vx -- -femulated-tls)
+    cf+=(-I"$REPO_ROOT/probes" -I"$REPO_ROOT/probes/lowbase" -I"$fork/src" -I"$fork/wine/ps5"
+         -DPROBE_BUILD_ID="\"$bid\"" -DPROBE_NETLOG_HOST="\"$PS4_NETLOG_HOST\"" -DPROBE_NETLOG_PORT="$PS4_NETLOG_PORT")
+    rm -rf "$out"; mkdir -p "$out/obj"
+    log "lowbase: build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
+
+    for f in lowbase/lowbase_prx lowbase/lowbase_rt lowbase/stub probe_util probe_netlog; do
+        [ "$f" = lowbase/stub ] && continue   # needs the PRX's PT_TLS size: below
+        clang "${cf[@]}" -c "$REPO_ROOT/probes/$f.c" -o "$out/obj/$(basename "$f").o"
+    done
+    clang++ "${cf[@]}" -std=c++17 -c "$REPO_ROOT/probes/lowbase/lowbase_unwind.cpp" -o "$out/obj/lowbase_unwind.o"
+    clang "${cf[@]}" -c "$fork/src/pw_eboot_release.c" -o "$out/obj/pw_eboot_release.o"
+    clang "${cf[@]}" -c "$fork/wine/ps5/pw_wine_prx.c" -o "$out/obj/pw_wine_prx.o"
+    clang "${cf[@]}" -c "$REPO_ROOT/probes/lowbase/lowbase_mod.c" -o "$out/obj/lowbase_mod.o"
+    clang "${cf[@]}" -DLB_MOD2 -c "$REPO_ROOT/probes/lowbase/lowbase_mod.c" -o "$out/obj/lowbase_mod2.o"
+    lb_desc() { # lb_desc NAME EXPORT...
+        local name=$1; shift
+        python3 "$fork/tools/gen_prx_descriptor.py" --orbis "$out/obj/${name}_desc.c" "$@" ||
+            die "cannot generate the $name descriptor"
+        clang "${cf[@]}" -c "$out/obj/${name}_desc.c" -o "$out/obj/${name}_desc.o"
+    }
+    lb_desc lowbase lowbase_main
+    lb_desc lowbase_mod lowbase_mod_value
+    lb_desc lowbase_mod2 lowbase_mod_value lowbase_mod2_tick
+
+    lb_prx() { # lb_prx NAME OBJECTS... -- SCE_LIBS...
+        local name=$1 objs=() libs=(); shift
+        while [ $# -gt 0 ] && [ "$1" != -- ]; do objs+=("$1"); shift; done
+        [ $# -gt 0 ] && shift
+        libs=("$@")
+        ld.lld -m elf_x86_64 -pie --export-dynamic -e module_start \
+            --script "$oo/link.x" -T "$fork/wine/ps5/prx_eh_frame.ld" --eh-frame-hdr \
+            --no-rosegment -z max-page-size=0x4000 -soname "$name.so" -o "$out/$name.elf" "${objs[@]}" \
+            -L"$ORBIS_COMPAT_BUILD" -lorbis-compat "$ORBIS_COMPAT_BUILD"/libc16/libc16_*.o \
+            -L"$oo/lib" -lc -lkernel -lc++ "${libs[@]}"
+        (cd "$out" && "$fself" -in="$name.elf" -out="$name.oelf" --lib="$name.prx" -libname="$name" \
+            --paid 0x3800000000000011 >/dev/null)
+        rm -f "$out/$name.oelf"
+        [ -s "$out/$name.prx" ] || die "create-fself produced no $name.prx"
+        chmod 755 "$out/$name.prx"
+    }
+    lb_prx lowbase "$out"/obj/{lowbase_prx,lowbase_rt,lowbase_unwind,probe_util,probe_netlog,pw_eboot_release,pw_wine_prx,lowbase_desc}.o \
+        -- -lSceNet -lSceVideoOut -lSceAudioOut -lSceSystemService -lSceUserService -lScePad -lSceSysmodule -lSceGnmDriver
+    lb_prx lowbase_mod "$out"/obj/{lowbase_mod,lowbase_mod_desc}.o --
+    lb_prx lowbase_mod2 "$out"/obj/{lowbase_mod2,lowbase_mod2_desc}.o -- -lSceRtc
+
+    # Program headers as "filesz memsz align" (TLS) or vaddrs (LOAD), decimal (mawk has no strtonum).
+    phdr_tls() { local l; l="$(llvm-readelf -lW "$1" | awk '$1 == "TLS" { print $5, $6, $NF }')"
+                 [ -n "$l" ] || { echo "0 0 0"; return; }; set -- $l; echo "$(($1)) $(($2)) $(($3))"; }
+    # The stub's PT_TLS is the storage for lowbase.prx's thread-locals (stub.c): sized from it.
+    read -r f tls_mem tls_align <<<"$(phdr_tls "$out/lowbase.elf")"
+    clang "${cf[@]}" -DLB_STUB_TLS_BYTES="$(( tls_mem > 0 ? tls_mem : 8 ))" \
+        -c "$REPO_ROOT/probes/lowbase/stub.c" -o "$out/obj/stub.o"
+    ld.lld -m elf_x86_64 -pie --script "$oo/link.x" --eh-frame-hdr \
+        "$out/obj/stub.o" "$out/obj/pw_wine_prx.o" \
+        -L"$ORBIS_COMPAT_BUILD" -lorbis-compat \
+        -L"$oo/lib" -lc -lkernel -lc++ -lSceNet -lSceVideoOut -lSceAudioOut -lSceSystemService -lSceUserService \
+        -lScePad -lSceSysmodule -lSceGnmDriver "$oo/lib/crt1.o" -o "$out/stub.elf" --Map="$out/stub.map"
+
+    # Gates. A raw syscall instruction outside libkernel kills the process.
+    bad="$(llvm-objdump -d "$out"/obj/*.o | grep -cw syscall || true)"
+    [ "$bad" = 0 ] || die "lowbase objects contain $bad raw syscall instruction(s)"
+    for f in lowbase:module_start lowbase:lowbase_main lowbase_mod:lowbase_mod_value lowbase_mod2:lowbase_mod2_tick; do
+        [[ "$(llvm-readelf --dyn-syms "$out/${f%%:*}.elf")" =~ GLOBAL\ +DEFAULT\ +[0-9]+\ ${f#*:}($'\n'|$) ]] ||
+            die "${f%%:*}.prx does not export ${f#*:}"
+    done
+    # A PT_LOAD that starts mid-page is ENOEXEC for an app PRX (CLAUDE.md).
+    for n in lowbase lowbase_mod lowbase_mod2; do
+        for f in $(llvm-readelf -lW "$out/$n.elf" | awk '$1 == "LOAD" { print $3 }'); do
+            [ $((f % 16384)) = 0 ] || die "$n.prx has a PT_LOAD at $f, not 16 KiB aligned"
+        done
+    done
+    # The stub NEEDs every Sony library lowbase.prx and lowbase_mod.prx NEED (by basename: the
+    # fork's PRXs record absolute paths). lowbase_mod2 is the deliberate exception (prx_sce).
+    needed() { llvm-readelf -d "$1" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | xargs -rn1 basename | LC_ALL=C sort -u; }
+    for n in lowbase lowbase_mod; do
+        lib="$(LC_ALL=C comm -23 <(needed "$out/$n.elf" | grep '^libSce') <(needed "$out/stub.elf"))"
+        [ -z "$lib" ] || die "the stub does not NEED what $n.prx NEEDs: $lib"
+    done
+    [ -n "$(LC_ALL=C comm -23 <(needed "$out/lowbase_mod2.elf" | grep '^libSce') <(needed "$out/stub.elf"))" ] ||
+        die "lowbase_mod2.prx should NEED a Sony library the stub lacks (libSceRtc)"
+    # The stub's PT_TLS: .tbss only (filesz 0), at least lowbase.prx's size and alignment.
+    read -r f n bad <<<"$(phdr_tls "$out/stub.elf")"
+    [ "$n" -gt 0 ] || die "the stub has no PT_TLS"
+    [ "$f" = 0 ] || die "the stub's PT_TLS has $f initialised bytes: the image would be released with the eboot"
+    [ "$n" -ge "$tls_mem" ] || die "the stub's PT_TLS ($n bytes) is smaller than lowbase.prx's ($tls_mem)"
+    [ "$bad" -ge "$tls_align" ] || die "the stub's PT_TLS alignment ($bad) is below lowbase.prx's ($tls_align)"
+    log "lowbase: stub $(stat -c %s "$out/stub.elf") bytes, PT_TLS $n bytes (lowbase.prx $tls_mem); needs: $(needed "$out/stub.elf" | tr '\n' ' ')"
+    log "lowbase: lowbase.prx needs: $(needed "$out/lowbase.elf" | tr '\n' ' ')"
+
+    "$SCRIPT_DIR/pkg.sh" --elf "$out/stub.elf" --name lowbase --title-id "$LOWBASE_TITLE_ID" --title "$LOWBASE_TITLE_NAME" \
+        --prx "$out/lowbase.prx" --prx "$out/lowbase_mod.prx" --prx "$out/lowbase_mod2.prx"
+}
+
 # Host tests: the probe's and the triangle's pure helpers, check.sh's milestone a and b rules.
 probe_test() {
     local out="$BUILD_DIR/test"
@@ -331,6 +442,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_p6_test.sh"
     "$REPO_ROOT/tests/check_g_test.sh"
     "$REPO_ROOT/tests/check_psy_test.sh"
+    "$REPO_ROOT/tests/check_i_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -496,6 +608,7 @@ case "$1" in
     probe) build_probe ;;
     probe-test) probe_test ;;
     triangle) build_triangle ;;
+    lowbase) build_lowbase ;;
     wine) shift; build_wine "$@" ;;
     wine-desktop) shift; build_wine_desktop "$@" ;;
     title) build_title ;;

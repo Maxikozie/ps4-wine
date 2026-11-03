@@ -105,6 +105,17 @@ extern int32_t sceUserServiceGetInitialUser( int32_t *user );
 extern int32_t sceSystemServiceLoadExec( const char *path, const char *args[] );
 extern int32_t sceSystemServiceHideSplashScreen(void);
 
+/* ---- milestone i1 (probes/lowbase): module info, sysmodule, pad, AudioOut output, GnmDriver, Rtc */
+extern int32_t k_module_info( int32_t handle, void *info ) __asm__("sceKernelGetModuleInfo");
+extern int32_t sceSysmoduleLoadModule( uint16_t id );
+extern int32_t sceSysmoduleGetModuleHandleInternal( uint32_t id, int32_t *handle );
+extern int32_t scePadInit(void);
+extern int32_t scePadOpen( int32_t user, int32_t type, int32_t index, const void *param );
+extern int32_t scePadReadState( int32_t handle, void *state );
+extern int32_t sceAudioOutOutput( int32_t handle, const void *samples );
+extern int32_t sceGnmSubmitDone(void);
+extern int32_t sceRtcGetCurrentTick( uint64_t *tick );
+
 /* ---- libSceNet */
 extern int32_t  sceNetInit(void);
 extern int32_t  sceNetSocket( const char *name, int32_t family, int32_t type, int32_t proto );

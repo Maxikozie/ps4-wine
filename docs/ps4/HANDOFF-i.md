@@ -44,8 +44,42 @@ at the frame rate fixed below (`fps_avg>=30`, `fps_avg<=61`).
 - Not run: j2.
 - Saves are in `C:\Psychonauts\Profiles\Profile 1\`, copied to `build/saves/psychonauts/`.
 
+**i1 built, not run (2026-11-03):**
+- `build.sh lowbase` → `dist/lowbase-d6e290c+dirty.pkg`: title `PSWN00003` ("ps4-wine lowbase"), the stub eboot
+  (`probes/lowbase/stub.c`) plus `sce_module/lowbase.prx`, `lowbase_mod.prx` and `lowbase_mod2.prx` (`pkg.sh --prx`).
+- Build gates passed: no raw syscall; the exports are present; every PRX PT_LOAD is 16 KiB aligned; the stub NEEDs
+  every Sce library of `lowbase.prx` and `lowbase_mod.prx` (`mod2` alone NEEDs `libSceRtc`); the stub's PT_TLS is
+  24 B `.tbss` (filesz 0, align 16) ≥ `lowbase.prx`'s 16 B (`lb_tls` at TP-16, musl's locale at TP-8, local-exec).
+- The release is the fork's `src/pw_eboot_release.c`: page-rounded, merged ranges (today's eboot: one range,
+  0x400000-0x6cc000); `test_pw_eboot_release` and the whole fork `make test` pass.
+- `check.sh i1` (the rule above, verbatim), `tests/check_i_test.sh` (7 fixtures: pass, Home-death after the line
+  still PASS, release refused, reserve refused, alive 590, a recorded field's fault, stage records only) and the
+  i1 line formatter test pass in `build.sh probe-test`.
+
+**i1 passed (2026-11-03 01:42, LOG L16, `logs/20261103-012652-i1.log`): row 16 carries to the Slim.** S1 does not
+apply. Measured, and what each result decides for i:
+- The stub's 3 segments (0x400000-0x508000) were unmapped as one range. Module 0's info still lists them afterwards
+  (`module0_after=listed:3`), and nothing read them: 4 unwind frames, none in the range.
+- After the release, all of these worked: the reserve at 0x400000 (it was refused before the release, 0x8002000c),
+  direct memory mapped there with RX code, a second VideoOut open (HDMI blue), the keyboard sysmodule load with
+  `sceKeyboardOpen`, app PRX loads, 8 threads, the PRX's local-exec TLS in the stub's 24 B `.tbss`, C++ throw/catch,
+  FreeBSD `sigaction`, and `sceGnmSubmitDone` (rc 0 on every 100 ms tick).
+  - **For i:** HID's sysmodule retry may stay after the release.
+  - **For i:** the stub `.tbss` rule holds as built.
+- **The pad fails after the release:** `scePadOpen` 0x80920005. The probe did not log `scePadInit`'s rc; read as
+  not-initialized, `scePadInit` itself failed. **For i:** `scePadInit`/`scePadOpen` move before the release, for
+  every plan (g's `g_script`, d/f/p's pad opens). After the release, only reads.
+- **AudioOut open 0x809b0001** is the initial-user refusal measured in a and p5, not the release. The title opens
+  with the system user and before the release. Nothing to do.
+- **A PRX NEEDing `libSceRtc`, which the stub lacks, loaded and ran after the release** (`prx_sce=ok`). The stub's
+  "NEED every Sce library" is a safeguard, not a requirement. i keeps it anyway: it costs nothing.
+- **Home and back** (focus to NPXS20001 for 13 s) did not suspend the title: the ticks went on without a gap. The
+  user's close was a normal KillApp. klog showed the known `gbase_gvmsw_close` 0x804c0005 and no exception.
+- GoldHEN plugins: `[default]` `game_patch.prx` only.
+- Not tested: Wine, sessions past 10 minutes after the release (the run lasted 690 s), rest mode, LoadExec.
+
 **Next, in order:**
-1. **i1**, the probe.
+1. **i1 passed:** commit fork + repo (the user).
 2. **i**, the title split, with **l1** in the same package. The runtime then carries 0904, and its regressions cover
    it.
 3. **Still open from j:**
@@ -59,6 +93,34 @@ at the frame rate fixed below (`fps_avg>=30`, `fps_avg<=61`).
 - `HANDOFF-f.md:55-59`: the eboot's range is stale. It reaches 0x6cc000 now.
 - Still to change in i: `pe_bases.py`'s `EBOOT` constant.
 - `check.sh g` did run four times before the menu; it never ran on a gameplay window (`HANDOFF-g.md`, "Parked").
+
+**Corrections (2026-11-03, planning i1; read against the fork at `f3e37cc`):**
+- Line drift in B: `early_fault` is `wine64_main_orbis.c:286-325` (`:327-338` is `install_early_fault_report`);
+  `build_native_orbis.sh` flags `:72-75`, sources `:76-81`, link `:93-98`; `stage_fault` `pw_milestone_orbis.c:3230-3250`
+  (`:3252-3266` is `set_handlers`, `set_handlers(NULL)` at `:3364`); the stage exit hook is set at `:1969`.
+- "Built `-femulated-tls` like the other PRXs" (i2) is wrong. ntdll, win32u and wineserver are built without it; only
+  wowprospero's `unix.c`, wow64native and RADV use it. The title has no `__thread`; its only TLS is musl's
+  `__musl_current_locale` (8 B `.tbss`). lld relaxes a PRX's TLS to local-exec offsets into the main executable's block
+  (`F/wine/orbis/pw_emutls_orbis.c:4-14`), so the stub's PT_TLS block holds every PRX's musl locale: the stub's PT_TLS
+  must stay ≥ the largest PRX PT_TLS and `.tbss` only (filesz 0). Today's eboot: memsz 8, filesz 0. This answers B's
+  open question "whether the stub needs a PT_TLS": yes (inference; i1's `tls` measures it).
+- NEEDED: the Wine PRXs record Sce libraries by absolute path, so a stub/PRX comparison goes by basename.
+  libvulkan.prx NEEDs `libSceGnmDriver`, which the eboot does not NEED, and it runs (e passed): orbis-win's "the stub
+  must NEED every Sce library" (their 10110 lacked libSceSysmodule) holds at least for some libraries only. i1's
+  `prx_sce` measures a PRX loaded after the release that NEEDs a library nobody else does.
+- The release must not depend on the display stage having run: a relaunch skips passed stages
+  (`F/native/orbis/pw_stage_orbis.c:67-70`) and some plans have no `stage_display` (gc1), so the release could precede
+  every `sceVideoOutOpen` of that process (GLDS10044). i2 opens and closes VideoOut once before the release when nothing
+  opened it (`vo_prime`).
+- `pw_prx_parse_module_info` takes at most 4 segments (`PW_PRX_MAX_SEGMENTS`); today's eboot has exactly 4 PT_LOADs.
+- gc2 already has a stage named `release` (`pw_milestone_orbis.c:2073`): the new names are `eboot_release` /
+  `pw_eboot_release`.
+- Every plan line goes through `emit_line_with()` (`pw_milestone_orbis.c:3599`); c's line is the exception
+  (`wine64_main_orbis.c:122-127`, `report()`). `eboot_release=` is appended in both.
+- i1 gets its own title, `PSWN00003` ("ps4-wine lowbase"), as the triangle has `PSWN00002`, so the installed Wine title
+  and its data stay as they are.
+- The module-info parse and the release are written once in the fork (`F/src/pw_eboot_release.{c,h}`, test
+  `F/tests/test_pw_eboot_release.c`); the i1 probe compiles them from the submodule, so i1 tests the code i2 runs.
 
 ## The plan
 
