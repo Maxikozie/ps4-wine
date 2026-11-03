@@ -219,6 +219,12 @@ restart the pad's buttons are dead. So j is not passed, and stop point S3 holds 
 **j passed, 2026-11-03:** fork Wine patch 0904 makes `MapVirtualKeyEx` answer 0 for codes above 0xff that are not
 E0/E1 scan codes, as Windows documents. After one Defaults, two restarts kept the pad's buttons working and the INI
 byte-identical (`HANDOFF-i.md`, "The restart proof passed").
+**i passed, 2026-11-03 06:03** on build `1799f8a+dirty` (the stub without `PT_SCE_RELRO`, its data kept at
+0x7fff0000, the code page alone released): fixed32 at 0x400000 with no relocations, and g1n, g1m, g1, e and g2 all
+pass released. Stop point S2 does not hold: the 06:01 g2 session lived 1085 s after the release, through a save's load,
+gameplay and two trips to Home, with no fault (`HANDOFF-i.md`, "S2 settled"). **l1 passed, 2026-11-03 15:27** (third
+launch; the two before failed on the 30 s window, not the pad path): the DS4 as XInput controller 0 through
+`xinput1_3.prx`, all buttons, full stick range, both triggers, both motors by the user's word.
 
 ## Polish (not gating)
 

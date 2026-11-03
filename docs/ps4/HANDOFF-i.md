@@ -123,8 +123,45 @@ apply. Measured, and what each result decides for i:
 - **Not tested before the console:** RADV/Gnm submits after the release, the mouse after it, SubmitDone with GPU work
   in flight, AudioOut output after it, `xinput1_3.prx` loading on the console, LoadExec.
 
-**i on the console, 2026-11-03 03:16-06:03 (LOG). Where it stands: i PASSED at 06:03 on build `1799f8a+dirty`
-(the stub without PT_SCE_RELRO, its data kept at 0x7fff0000, no 1140); l1 is next.**
+**i and l1 PASSED (2026-11-03; i at 06:03, l1 at 15:27, both on build `1799f8a+dirty`, fork commit 6394f19);
+S2 settled, not triggered. k is next.**
+- **l1 (LOG, 15:21-15:27, three launches, no rebuild).** First, FTP read-only: `xinput1_3.prx` (768,688 B, mode 777)
+  under `/data/ps4-wine/runtime/win/wine/lib/wine/x86_64-unix/`, `xinput32.exe` in the prefix's `drive_c`,
+  `profiles/xinput32.ini`, all at the local sizes. env.txt `PS4WINE_MILESTONE=l1`; the saved
+  `g`/`AUDIO=on`/`+loaddll` was put back afterwards.
+  - 15:21 FAIL: six stick bounds short. The user's Share press opened the system Share menu inside the window, and
+    the system held the pad for 743 of 3699 packets (`pad_intercepted`, centred sticks).
+  - 15:24 FAIL: `buttons_seen=0x0310`. Every stick bound was at full scale and nothing was intercepted, but the stick
+    holds asked for first used up the 30 s, and the buttons came after it.
+  - 15:27 PASS: buttons, triggers and sticks repeated until the rumble. `get0=0 caps=0 get1=1167
+    buttons_seen=0xf3ff`, every axis -32768..32767, triggers 255, `set0=0 rumble_events=2 vibration_rc=0x0`, exit 0,
+    no fault, `eboot_release=ok`. **The user felt both motors in all three launches.** vid/pid come back `-`.
+  - **For l and later pad steps:** 30 s is too short for the user to cover everything. The user said so. Run
+    xinput32.exe with a longer window (it takes the seconds as `argv[1]`) and ask for the buttons first, in one plain
+    list. Do not change the rule's thresholds.
+- **S2 settled (2026-11-03, from what was recorded; g2 not rerun).** S2 does not hold:
+  - every regression passed released;
+  - fixed32 was neither refused nor relocated;
+  - the Wine session outlived the 600 s.
+
+  Measured in `logs/20261103-060124-g2.log`, which runs to 06:19:41, when its logger stopped:
+  - `alive` ticks every ~20 s with no gap to `t=1086`, i.e. 1085 s after the 06:01:36 release, and
+    `faults_unresolved=0` in every `gpad` line;
+  - 37,570 presents (the one 26 s stall, 06:03:43-06:04:16, is the save's level load), ~51 fps from 06:13 on;
+  - `sceGnmSubmitDone` 51,566 calls, rc 0, none skipped;
+  - Home and back twice: 06:05:33-06:05:35, and 06:09:36-06:11:18 into Settings (System Information, Debug Settings,
+    a delete dialog). Focus returned to `PSWN00001` both times, and ticks and presents went on.
+
+  `build/clips/bloodlines-ps4-wine-20261103.mp4` (39.6 s) shows the second trip on HDMI, then gameplay and a loading
+  screen.
+
+  **Not measured:**
+  - the 600 s idle on the main menu as the step was written: the user played from a save instead;
+  - anything after 06:19:41, including how the session ended;
+  - rest mode and LoadExec.
+
+**i on the console, 2026-11-03 03:16-06:03 (LOG). i PASSED at 06:03 on build `1799f8a+dirty`
+(the stub without PT_SCE_RELRO, its data kept at 0x7fff0000, no 1140).**
 - **Installed and staged (updated 06:03):**
   - Title `ps4-wine-1799f8a+dirty.pkg`: the stub without `PT_SCE_RELRO`, data at 0x7fff0000 (below, "The cause and
     the fix").
@@ -257,10 +294,9 @@ audit first, then one probe, two traced Wine runs, the fix's probe and two Wine 
    suspected, run it again with `PS4WINE_SUBMIT_DONE=0`.
 
 **Next, in order:**
-1. **l1**, step 2.7 (`PS4WINE_MILESTONE=l1`; every button, both sticks to their extremes, both triggers within 30 s,
-   then the user says whether the motors ran), on build `1799f8a+dirty`. Then commit fork + repo (the user). Stop
-   point S2 before any Psychonauts upload.
-2. **Still open from j:**
+1. ~~**l1**~~ passed 2026-11-03 15:27; S2 settled (above). Commit the repo (the fork is clean at 6394f19).
+2. **k** (below): the user first reads Settings → Storage (at least 6 GB free on /data).
+3. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;
