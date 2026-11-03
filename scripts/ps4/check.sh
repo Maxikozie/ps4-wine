@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1|i|l1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -102,6 +102,14 @@ its line into logs/<ts>-host-psychonauts-j.log; a pass is "PASS (host)", and j g
 i1 is the low-base probe (build.sh lowbase, title PSWN00003): direct_mib>=4000, release, reserve400, exec400, vo2,
 prx, threads, tls and fault ok, alive_s>=600, faults_unresolved=0. Its PW_MS stage=suspend record (the user's Home
 and back after the line) is recorded only and never part of the rule.
+i is the low base (fixed32.exe at 0x400000 after the title released its eboot): bits=32 cpu=native eboot_release=ok
+base=0x00400000 relocs=0 size_kib>=4144 text_rx rdata_ro data_rw seh thread ok, faults_unresolved=0, exit=0
+(rdata_ro: a write to a read-only section filling its own 16 KiB host page faults; rdata_shared, the write to
+.rdata on a host page shared with .data, is recorded only: writable by fork patch 0974's design); and
+docs/ps4/LOG.md (CHECK_LOG_MD overrides it) must hold PASS lines of the same build for g1n, g1m, g1, e and g2,
+each with eboot_release=ok. l1 is xinput32.exe reading the DS4 as XInput controller 0: bits=32 get0=0 caps=0
+buttons_seen=0xf3ff, every stick axis to -30000 and 30000, both triggers to 250, set0=0, rumble_events>=2,
+faults_unresolved=0, exit=0.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
 USAGE
@@ -124,7 +132,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|i1|i|l1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ]; then
     { [ -n "$AUDIO" ] && [ -n "$AUDIO_WINDOW" ]; } || [ "$NOAUDIO" = 1 ] ||
@@ -167,7 +175,7 @@ if [ -z "$LINE" ]; then
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||
           "$MS" == g || "$MS" == g1 || "$MS" == g1[nm] || "$MS" == g2 || "$MS" == gseg || "$MS" == gc || "$MS" == gc[12] || "$MS" == gpad ||
-          "$MS" == i1 ]]; then
+          "$MS" == i1 || "$MS" == i || "$MS" == l1 ]]; then
         STAGES="$(grep -oE 'PW_(D1|MS) stage=[a-z0-9_]+ ' "$LOG" | sed -E 's/PW_(D1|MS) stage=//; s/ $//' | awk '!seen[$0]++' | paste -sd, - || true)"
         STAGES="; stage records: ${STAGES:-none}"
     fi
@@ -337,6 +345,22 @@ case "$MS" in
     i1) word lowbase; req direct_mib ge 4000
         for k in release reserve400 exec400 vo2 prx threads tls fault; do req "$k" eq ok; done
         req alive_s ge 600; req faults_unresolved eq 0 ;;
+    # i and l1 (docs/ps4/HANDOFF-i.md, fixed 2026-11-02).
+    i) word fixed32; req bits eq 32; req cpu eq native; req eboot_release eq ok; req base eq 0x00400000; req relocs eq 0
+       req size_kib ge 4144
+       for k in text_rx rdata_ro data_rw seh thread; do req "$k" eq ok; done
+       req faults_unresolved eq 0; req exit eq 0
+       # The regressions on the same build, released (HANDOFF-i.md "Regressions").
+       LOG_MD="${CHECK_LOG_MD:-$REPO_ROOT/docs/ps4/LOG.md}"
+       for m in g1n g1m g1 e g2; do
+           # No grep -q after a pipe: under pipefail its early exit could fail the first grep (SIGPIPE).
+           grep -F "| $m | build $BID | PASS" "$LOG_MD" 2>/dev/null | grep -F "eboot_release=ok" > /dev/null ||
+               FAILS+=("LOG.md has no $m PASS of build $BID with eboot_release=ok")
+       done ;;
+    l1) word xinput32; req bits eq 32; req get0 eq 0; req caps eq 0; req buttons_seen eq 0xf3ff
+        for a in lx ly rx ry; do req "${a}_min" le -30000; req "${a}_max" ge 30000; done
+        req lt_max ge 250; req rt_max ge 250; req set0 eq 0; req rumble_events ge 2
+        req faults_unresolved eq 0; req exit eq 0 ;;
     j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
        req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

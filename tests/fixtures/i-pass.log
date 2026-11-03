@@ -1,0 +1,6 @@
+# synthetic fixture, written before the first i launch (format of logs.sh: HH:MM:SS N|K text)
+10:00:00 N PW_MS start plan=i exe=C:\fixed32.exe stages=0/3 stopped=- launches=1 resumed=- file=/data/ps4-wine/i/progress.txt
+10:00:01 N PW_MS stage=cpu_probe cpu_probe=nosysctl
+10:00:01 N PW_MS stage=low_map low_map=ok
+10:00:02 N PW_MS stage=eboot_prepare vo_prime=1 pad=ok pad_failed=- pad_status=0x0
+10:00:08 N PS4WINE i fixed32 bits=32 base=0x00400000 relocs=0 size_kib=4160 text_rx=ok rdata_ro=ok rdata_shared=writable data_rw=ok seh=ok thread=ok exit=0 server=inprocess low_free_mib=1712 low_hole=0x810000+1700 cpu_probe=nosysctl cpu=native native_caps=7 faults_unresolved=0 faults_unhandled=0 threads_live=1 threads_live_peak=2 eboot_release=ok low_end=0x410000 build=abc1234 stages=3/3 stopped=- launches=1 resumed=- session_s=6

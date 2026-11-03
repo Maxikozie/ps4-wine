@@ -57,6 +57,8 @@ PS4WINE f2 gdi32 win32u=ok pixel=ff8000 window=ok screen=800x600 ... fb=ok      
   - PINBALL.EXE has no relocations and must load at 0x01000000-0x0104b000; that range is free.
   - An EXE without relocations at base 0x400000 (many MSVC games) collides with the eboot. That
     is a risk for g/h: a different eboot base, or a check of each game's base.
+    (2026-11-03, stale since milestone i: the eboot is now a stub, 0x400000-0x414000, which the
+    title unmaps before Wine starts; see `HANDOFF-i.md`, i1 and i.)
 - Wine's direct memory below 4 GiB is 14 MiB (peak 18). Neither RADV nor libvulkan.prx loaded.
 
 **Next:** the user commits, fork and repo (see "Uncommitted"). Then plan `f` itself:

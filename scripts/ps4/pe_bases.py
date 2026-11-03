@@ -6,11 +6,14 @@ Reads every .exe/.dll/.asi (any case) under the given directories, or every file
 ImageBase, SizeOfImage, IMAGE_FILE_RELOCS_STRIPPED, a .reloc section, the base-relocation
 directory's size, DYNAMIC_BASE. An image is relocatable when its relocations are not stripped and
 its relocation directory is not empty. Then the verdict for the PS4 (milestone f measured the
-address space below 4 GiB before Wine starts: only the title's eboot, 0x400000-0x650000):
-  - fixed images (not relocatable) overlapping the eboot cannot load at all;
+address space below 4 GiB before Wine starts: only the title's eboot; since milestone i the eboot is a
+small stub the title releases before Wine starts):
+  - fixed images (not relocatable) overlapping the eboot load once the title releases the eboot
+    (milestone i; PS4WINE_EBOOT_RELEASE=0 keeps it, and then they cannot load at all);
   - fixed images overlapping each other cannot both load;
-  - relocatable images that want 0x400000 are moved (wow32.exe was, f1).
-Prints a Markdown table and the verdict; exit 0 when no fixed image is blocked, 1 otherwise,
+  - relocatable images that want 0x400000 load there too after the release (before milestone i Wine
+    moved them: wow32.exe was, f1).
+Prints a Markdown table and the verdict; exit 0 when no two fixed images clash, 1 otherwise,
 2 on a usage error. Python 3 standard library only; reads headers, writes nothing.
 """
 from __future__ import annotations
@@ -21,7 +24,10 @@ import struct
 import sys
 from pathlib import Path
 
-EBOOT = (0x400000, 0x650000)   # the title's eboot below 4 GiB (milestone f1, LOG.md 2026-11-01 15:59)
+# The title's eboot below 4 GiB: the stub of milestone i (build/title/eboot.elf, computed from its program
+# headers, 16 KiB pages; the console's low_end in milestone i's lines is the measured value). Before i the
+# eboot was the whole title, 0x400000-0x650000 in f1 (LOG.md 2026-11-01 15:59) and 0x400000-0x6cc000 later.
+EBOOT = (0x400000, 0x414000)
 MACHINES = {0x14C: "i386", 0x8664: "x86_64"}
 
 
@@ -106,13 +112,13 @@ def main() -> int:
     moved = [r for r in rows if r["relocatable"] and overlaps((r["base"], r["end"]), EBOOT)]
     print()
     print(f"{len(rows)} images, {len(fixed)} fixed (not relocatable), {len(rows) - len(fixed)} relocatable.")
-    print(f"Fixed images overlapping the eboot (0x{EBOOT[0]:x}-0x{EBOOT[1]:x}): "
-          + (", ".join(f"`{r['path']}`" for r in blocked) if blocked else "none."))
+    print(f"Fixed images overlapping the eboot (0x{EBOOT[0]:x}-0x{EBOOT[1]:x}), which load once the title "
+          "releases the eboot (milestone i): " + (", ".join(f"`{r['path']}`" for r in blocked) if blocked else "none."))
     print("Fixed images overlapping each other: "
           + ("; ".join(f"`{a['path']}` and `{b['path']}`" for a, b in clashes) if clashes else "none."))
-    print("Relocatable images wanting the eboot's range (Wine moves them): "
+    print("Relocatable images wanting the eboot's range (they load there after the release): "
           + (", ".join(f"`{r['path']}`" for r in moved) if moved else "none."))
-    return 1 if blocked or clashes else 0
+    return 1 if clashes else 0
 
 
 if __name__ == "__main__":

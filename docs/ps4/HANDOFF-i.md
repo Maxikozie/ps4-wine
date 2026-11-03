@@ -78,11 +78,71 @@ apply. Measured, and what each result decides for i:
 - GoldHEN plugins: `[default]` `game_patch.prx` only.
 - Not tested: Wine, sessions past 10 minutes after the release (the run lasted 690 s), rest mode, LoadExec.
 
+**i and l1 built, not run (2026-11-03; i1 committed: fork e0f5af9, repo 187fa1d):**
+- **The title split.**
+  - `dist/ps4-wine-e0f5af9+dirty.pkg` is the stub eboot (`F/native/orbis/pw_stub_orbis.c`, 4 PT_LOADs,
+    0x400000-0x414000 computed) plus `sce_module/ps4wine.prx` (today's objects, `main` → `pw_title_main`).
+  - `build_native_orbis.sh` gates (all pass):
+    - the stub NEEDs every Sony library of `ps4wine.prx` and of each Wine PRX;
+    - its 64 B `.tbss` block covers every PRX's TLS block, rounded to alignment;
+    - at most 4 PT_LOADs, no mid-page PT_LOAD in the PRX, exports present, no syscall/sigsetjmp.
+  - Constructors now run by `module_start`: orbis-compat's `orbis_paths.cpp` static init (an empty `std::string`,
+    as in every Wine PRX) and the descriptor's marker.
+- **The release** (`release_eboot`, `F/native/orbis/wine64_main_orbis.c`):
+  - It runs between `pw_wine_start_environment` and `pw_wine_start_run`.
+  - Before it, `pw_ms_eboot_release_prepare` does a VideoOut open+close if no open happened in this process
+    (`vo_prime`), the pad's one open (`pw_pad_orbis_open`, shared, mutex), and for plan g the keyboard/mouse
+    sysmodules and opens (`g_hid_open_once`).
+  - Records `PW_MS stage=eboot_prepare ...`. `PS4WINE_EBOOT_RELEASE=0` keeps the eboot (`eboot_release=off`).
+  - Every plan line and c's line end in `eboot_release=ok|off|<rc> low_end=0x...`; `-` when the line comes from a
+    launch that did not run Wine.
+- **`sceGnmSubmitDone`** runs every 20 ms on its own thread (256 KiB caller-set stack), only when
+  `sceGnmAreSubmitsAllowed()==1`. Logged every 60 s: `PW_WINE64 submitdone calls= skipped= rc_first= max_us=`.
+  `PS4WINE_SUBMIT_DONE=0` turns it off. Recorded, not gated. It is the first suspect if a Vulkan regression hangs.
+- **Plan `i`:** `cpu_probe`, `low_map`, then `C:\fixed32.exe` on the native CPU → `PS4WINE i fixed32 bits base relocs
+  size_kib text_rx rdata_ro rdata_shared data_rw seh thread exit ... cpu faults_unresolved ... eboot_release low_end`.
+- **Plan `l1`:** profile `xinput32` (`profiles/xinput32.ini`, `[input] mode = xinput`, cpu native), `cpu_probe`,
+  `C:\xinput32.exe`.
+  - The feed: `pw_ms_xinput_start` after ntdll loads (xinput mode only). It sets slot 0 connected before Wine runs,
+    then a 4 ms feed thread (256 KiB stack) reads the PS5 pad core with the DS4 ops (`F/native/orbis/pw_pad_ps4_orbis.c`,
+    touch block kept). Mapping is `pw_wine_game_pad`; the touchpad's right half is the title's mark (counted on
+    release, never given to the game); rumble goes to `pw_pad_ps5_vibrate`.
+  - The line embeds the XINPUT line plus `xinput pad_open pad_reads pad_packets pad_buttons pad_rumbles
+    pad_rumbles_on vibration_rc pad_intercepted pad_disconnected marks` and cpu/faults.
+- **Runtime:** `xinput1_3.prx` (NEEDs ntdll, reaches the slot through `dlsym(RTLD_DEFAULT)` → ntdll's
+  `pw_wine_dl`); win32u.prx carries 0904. Staged with `runtime.sh --stage-only` (1709 files, 393 MiB); not
+  uploaded.
+- **Host tests, all pass:**
+  - fork `make test` (incl. `test_pw_eboot_release` with argv copy, `test_pw_pad_ps4_orbis`,
+    `test_wine_xinput32.py` with a fake pad slot, `test_wine_fixed32.py` at 4 and 16 KiB pages);
+  - `build.sh probe-test` (incl. `check_i_test.sh` with i's fixtures and `CHECK_LOG_MD`, `check_l_test.sh`);
+  - `pe_bases.py` on fixed32 (fixed, 0x400000, SizeOfImage 0x41x000).
+- **An independent review** (2026-11-03) found no blocker. Acted on: SubmitDone off the main thread, keyboard/mouse
+  before the release, stricter gates, a pipefail-safe grep in `check.sh i`, small stacks. Left: a failed close in
+  `pw_videoout_orbis_prime` would leave VideoOut busy (very unlikely).
+- **Not tested before the console:** RADV/Gnm submits after the release, the mouse after it, SubmitDone with GPU work
+  in flight, AudioOut output after it, `xinput1_3.prx` loading on the console, LoadExec.
+
+**The console sequence for i** (each launch one LOG line; `logs.sh` under `systemd-inhibit --what=sleep`):
+1. `runtime.sh` (full upload), `prefix.sh --extras` (fixed32.exe, xinput32.exe, the xinput32 profile), and
+   `deploy.sh dist/ps4-wine-<id>.pkg`. The user closes the running title and installs it over `c76b600+dirty`.
+2. Each launch's `env.txt`:
+   1. `PS4WINE_MILESTONE=i WINEDEBUG=+loaddll`
+   2. `g1n`
+   3. `g1m`
+   4. `g1`
+   5. `e`
+   6. `PS4WINE_MILESTONE=g PS4WINE_AUDIO=on WINEDEBUG=+loaddll`: g2, then 600 s on the menu, then Home and back
+      (recorded only)
+   7. `PS4WINE_MILESTONE=l1`: the user presses every button, both sticks to their extremes and both triggers
+      within 30 s, then reports whether the motors ran.
+3. A regression that fails released is run again with `PS4WINE_EBOOT_RELEASE=0` (S2's A/B). If SubmitDone is
+   suspected, run it again with `PS4WINE_SUBMIT_DONE=0`.
+
 **Next, in order:**
-1. **i1 passed:** commit fork + repo (the user).
-2. **i**, the title split, with **l1** in the same package. The runtime then carries 0904, and its regressions cover
-   it.
-3. **Still open from j:**
+1. **i** and **l1** (one package), the console sequence above, then commit fork + repo (the user). Stop point S2
+   before any Psychonauts upload.
+2. **Still open from j:**
    - rumble not felt;
    - the touchpad's udev rule;
    - j2, only on the user's word;
@@ -241,6 +301,19 @@ Going Home (stage 15) never triggers S1.
 - It prints `FIXED32 base= relocs= size_kib= text_rx= rdata_ro= data_rw= seh= thread=`. `rdata_ro` means a write to
   `.rdata` raises an access violation, caught by SEH.
 - Plan `i` runs `C:\fixed32.exe` on the native CPU.
+- **Correction (2026-11-03, before i's first console run): the original `rdata_ro` expectation was wrong.**
+  - Fork patch 0974 gives image pages that share a 16 KiB host page the union of their protections, by design
+    ("Images keep the union, so code and data sections sharing a host page cost nothing"). Psychonauts' page at
+    0x77c000 is such a page.
+  - So with 16 KiB host pages a write to fixed32's `.rdata`, which shares its host page with `.data`, goes
+    through: `tests/test_wine_fixed32.py` measured `rdata_ro=writable:0` with `WINE_HOST_PAGE_SIZE=16384`, `ok`
+    with 4 KiB pages.
+  - `rdata_ro` now tests a read-only section, `.ro16` (48 KiB from an 8 KiB boundary), that fills a 16 KiB host
+    page of its own: the write to that page must raise an access violation at its address.
+  - The shared-page write is recorded as `rdata_shared` (`faults` or `writable`; expected `writable` on the
+    console).
+  - The threshold and every other gated field stay as fixed. The host test passes at both page sizes:
+    `rdata_ro=ok`, `rdata_shared=faults` (4 KiB) / `writable` (16 KiB).
 
 **Rule `check.sh i`** (fixed 2026-11-02, before its first run):
 `PS4WINE i fixed32 bits=32 cpu=native eboot_release=ok base=0x00400000 relocs=0 size_kib>=4144 text_rx=ok rdata_ro=ok data_rw=ok seh=ok thread=ok faults_unresolved=0 exit=0`.

@@ -32,8 +32,12 @@ usage: scripts/ps4/prefix.sh [--make] [--upload] [--extras] [--dest DIR] [--dry-
              the host build's wowprospero.dll and wow64native.dll (phase p2) -> drive_c/windows/system32, the user's Space Cadet
              Pinball (games/Pinball, gitignored, when present) -> drive_c/Pinball (milestone f),
              tests/wine_vk64.c for i686 -> drive_c/vk32.exe and tests/wine_d3d9tri32.c ->
-             drive_c/d3d9tri32.exe with drive_c/g1/dxvk.conf (milestone g1m/g1), the MenuHeight check;
-             then put just those files (no mirror of the whole prefix; the CPU key is --make's)
+             drive_c/d3d9tri32.exe with drive_c/g1/dxvk.conf (milestone g1m/g1), tests/wine_xinput32.c
+             for i686 -> drive_c/xinput32.exe (milestone l1), tests/wine_fixed32.c for i686 at a fixed
+             0x400000 without relocations -> drive_c/fixed32.exe (milestone i), the MenuHeight check; then put just those
+             files (no mirror of the whole prefix; the CPU key is --make's)
+  Every upload (--upload, --extras) also puts profiles/xinput32.ini (l1's profile: [input] mode =
+  xinput) into \$PS4_DATA_ROOT/profiles and verifies its size.
   (no option: --make and --upload)
 USAGE
 }
@@ -60,6 +64,9 @@ D3D11_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d11tri64.c"
 HELLO32_SRC="$PROSPERO_WIN_DIR/tests/wine_hello32.c"
 WOW32_SRC="$PROSPERO_WIN_DIR/tests/wine_wow32.c"
 D3D9_SRC="$PROSPERO_WIN_DIR/tests/wine_d3d9tri32.c"   # milestone g1: 32-bit D3D9 under DXVK
+XINPUT_SRC="$PROSPERO_WIN_DIR/tests/wine_xinput32.c"   # milestone l1: the DS4 as XInput controller 0
+XINPUT_PROFILE="$REPO_ROOT/profiles/xinput32.ini"     # its profile, put into $PS4_DATA_ROOT/profiles
+FIXED32_SRC="$PROSPERO_WIN_DIR/tests/wine_fixed32.c"   # milestone i: a PE32 fixed at 0x400000, no relocations
 WINCB_SRC="$PROSPERO_WIN_DIR/tests/wine_wincb.c"   # phase p5 step p5w: windows and callbacks on new threads
 WOWP_DLL="$PROSPERO_WIN_DIR/.deps/wine-host/build/dlls/wowprospero/x86_64-windows/wowprospero.dll"
 W64N_DLL="$PROSPERO_WIN_DIR/.deps/wow64native/x86_64-windows/wow64native.dll"   # tools/build_wow64native.sh (phase p2)
@@ -69,7 +76,7 @@ EXTRA_FILES=(drive_c/gdi64.exe drive_c/vk64.exe drive_c/d3d11tri64.exe
     drive_c/windows/system32/d3d11.dll drive_c/windows/system32/dxgi.dll drive_c/windows/syswow64/d3d9.dll
     drive_c/hello32.exe drive_c/wow32.exe drive_c/windows/system32/wowprospero.dll
     drive_c/windows/system32/wow64native.dll drive_c/wincb32.exe drive_c/wincb64.exe
-    drive_c/vk32.exe drive_c/d3d9tri32.exe drive_c/g1/dxvk.conf)
+    drive_c/vk32.exe drive_c/d3d9tri32.exe drive_c/g1/dxvk.conf drive_c/xinput32.exe drive_c/fixed32.exe)
 
 # DXVK's 64-bit d3d11.dll and dxgi.dll into system32 (milestone e) and its 32-bit d3d9.dll into
 # syswow64 (milestone g), from the release the fork pins (common.sh dxvk_archive). Native only where
@@ -119,6 +126,15 @@ add_extras() {
     mkdir -p "$PREFIX/drive_c/g1"
     printf 'd3d9.deferSurfaceCreation = True\nd3d9.memoryTrackTest = True\nd3d9.maxAvailableMemory = 1024\n' \
         > "$PREFIX/drive_c/g1/dxvk.conf"
+    # Milestone l1 (docs/ps4/HANDOFF-i.md): xinput1_3.dll's title-pad path, 32-bit; loads the DLL
+    # itself (LoadLibrary), so no import library.
+    i686-w64-mingw32-gcc -O1 -fno-omit-frame-pointer -Wall -Wextra -Werror -o "$PREFIX/drive_c/xinput32.exe" \
+        "$XINPUT_SRC"
+    # Milestone i: linked at 0x400000 with no relocation section (it loads there or not at all), 4 MiB of
+    # .bss for Psychonauts.exe's SizeOfImage, stripped (tests/test_wine_fixed32.py uses the same flags).
+    i686-w64-mingw32-gcc -O1 -s -fno-omit-frame-pointer -Wall -Wextra -Werror \
+        -Wl,--image-base,0x400000,--disable-dynamicbase,--disable-reloc-section \
+        -o "$PREFIX/drive_c/fixed32.exe" "$FIXED32_SRC"
     [ -f "$WOWP_DLL" ] || die "no $WOWP_DLL: scripts/ps4/build.sh wine"
     command cp -f "$WOWP_DLL" "$PREFIX/drive_c/windows/system32/"
     # Phase p2: the hardware WoW64 backend, selected per run by WINE_PS5_WOW64_CPU (patch 0611); the
@@ -145,6 +161,23 @@ add_extras() {
         die "user.reg has MenuHeight=$menu (a font-less wineboot's garbage, patch 0410): remake the prefix"
     fi
     log "extras: gdi64.exe $(stat -c %s "$PREFIX/drive_c/gdi64.exe") bytes, vk64.exe $(stat -c %s "$PREFIX/drive_c/vk64.exe") bytes, d3d11tri64.exe and DXVK $DXVK_VERSION, wow32.exe $(stat -c %s "$PREFIX/drive_c/wow32.exe") bytes and wowprospero.dll, wincb32.exe and wincb64.exe, ${#EXTRA_FILES[@]} files, MenuHeight=${menu:-unset}"
+}
+
+# l1's profile into $PS4_DATA_ROOT/profiles (as game.sh puts vtmb.ini), size verified.
+put_profiles() {
+    local cmds="set ftp:passive-mode true; set net:timeout 20; set net:max-retries 2;
+open ftp://$PS4_HOST:$PS4_FTP_PORT;
+mkdir -pf '$PS4_DATA_ROOT/profiles';
+put -O '$PS4_DATA_ROOT/profiles' '$XINPUT_PROFILE';
+quit" want have
+    [ -f "$XINPUT_PROFILE" ] || die "no $XINPUT_PROFILE"
+    if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$cmds"; return 0; fi
+    lftp -c "$cmds" >&2
+    want="$(stat -c %s "$XINPUT_PROFILE")"
+    have="$(curl -sS --ftp-pasv "ftp://$PS4_HOST:$PS4_FTP_PORT$PS4_DATA_ROOT/profiles/" 2>/dev/null |
+        awk -v n="$(basename "$XINPUT_PROFILE")" '$NF == n { print $5 }' | head -n1 || true)"
+    [ "$have" = "$want" ] || die "size mismatch: profiles/$(basename "$XINPUT_PROFILE") local $want remote ${have:-missing}"
+    log "put and verified $PS4_DATA_ROOT/profiles/$(basename "$XINPUT_PROFILE")"
 }
 
 # put FILES... (relative to the prefix) and verify their sizes.
@@ -203,7 +236,7 @@ fi
 if [ "$EXTRAS" = 1 ] && [ "$MAKE" = 0 ]; then
     [ -f "$PREFIX/user.reg" ] || die "no prefix at $PREFIX: run with --make"
     add_extras
-    [ "$UPLOAD" = 1 ] || { need_cmd lftp; put_files "${EXTRA_FILES[@]}"; }
+    [ "$UPLOAD" = 1 ] || { need_cmd lftp; put_files "${EXTRA_FILES[@]}"; put_profiles; }
 fi
 
 if [ "$UPLOAD" = 1 ]; then
@@ -218,7 +251,7 @@ put -O '$DEST' '$PREFIX/userdef.reg'; put -O '$DEST' '$PREFIX/.update-timestamp'
 quit"
     # The registry files are put explicitly: the console's Wine rewrites them, and mirror's
     # newer-than test (which trusts the console's clock) left a changed user.reg in place once.
-    if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$CMDS"; exit 0; fi
+    if [ "$DRY" = 1 ]; then printf 'lftp -c "%s"\n' "$CMDS"; put_profiles; exit 0; fi
     log "uploading to ftp://$PS4_HOST:$PS4_FTP_PORT$DEST"
     lftp -c "$CMDS" >&2
     bad=0
@@ -231,4 +264,5 @@ quit"
     done
     [ "$bad" = 0 ] || die "upload incomplete"
     log "prefix uploaded and verified"
+    put_profiles
 fi

@@ -16,7 +16,7 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g, j, i1)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g, j, i1, i, l1)
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   lowbase            probes/lowbase/ (a stub eboot + lowbase.prx, which releases the eboot's segments)
@@ -30,6 +30,7 @@ usage: scripts/ps4/build.sh --check-toolchain
   wine-desktop       a desktop host Wine (X11, FreeType, PulseAudio) in .deps/wine-host-desktop, for
                      playing a game on the laptop; needs the -dev packages it names        (milestone g)
   title              the ps4-wine title: the fork's native/orbis -> build/title/eboot.elf
+                     (a stub eboot + sce_module/ps4wine.prx since milestone i)
                      -> dist/ps4-wine-<id>.pkg (title $TITLE_ID; the runtime is uploaded
                      separately by scripts/ps4/runtime.sh)                               (milestone c)
   all                wine + title
@@ -443,6 +444,7 @@ probe_test() {
     "$REPO_ROOT/tests/check_g_test.sh"
     "$REPO_ROOT/tests/check_psy_test.sh"
     "$REPO_ROOT/tests/check_i_test.sh"
+    "$REPO_ROOT/tests/check_l_test.sh"
 }
 
 # Milestone b: probes/triangle.c drawing through RADV linked into the title. The link line is the
@@ -586,10 +588,11 @@ build_title() {
     (cd "$PROSPERO_WIN_DIR" && tools/build_native_orbis.sh --out "$out" --build-id "$bid"         --netlog-host "$PS4_NETLOG_HOST" --netlog-port "$PS4_NETLOG_PORT" --data-root "$PS4_DATA_ROOT" >&2)
     elf="$out/eboot.elf"
     [ -f "$elf" ] || die "no $elf"
-    log "title: ELF $(stat -c %s "$elf") bytes, needs: $(llvm-readelf -d "$elf" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
+    [ -f "$out/ps4wine.prx" ] || die "no $out/ps4wine.prx"
+    log "title: stub eboot $(stat -c %s "$elf") bytes, ps4wine.prx $(stat -c %s "$out/ps4wine.prx") bytes (milestone i: the stub loads the title from sce_module/), needs: $(llvm-readelf -d "$elf" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
     # The probe module rides in the package (loaded from the runtime directory on /data too).
     mkdir -p "$out/assets"; cp "$out/pw_probe_mod.prx" "$out/pw_probe_tls.prx" "$out/assets/"
-    BUILD_ID_OVERRIDE="$bid" "$SCRIPT_DIR/pkg.sh" --elf "$elf" --name ps4-wine --title-id "$TITLE_ID" --title "$TITLE_NAME"         --content-id "$CONTENT_ID" --assets "$out/assets"
+    BUILD_ID_OVERRIDE="$bid" "$SCRIPT_DIR/pkg.sh" --elf "$elf" --name ps4-wine --title-id "$TITLE_ID" --title "$TITLE_NAME"         --content-id "$CONTENT_ID" --assets "$out/assets" --prx "$out/ps4wine.prx"
 }
 
 stub() { # stub <target> <milestone> <lines...>
