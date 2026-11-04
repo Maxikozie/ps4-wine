@@ -18,7 +18,7 @@ this file wins.
 | Phase | What | State |
 |---|---|---|
 | 0 | Spike: headless CLI semantics | **done 2026-11-04, at its stop point** (results below) |
-| 1 | ctl ELF (BinLoader): install / launch / close; console run x1 | **x1 run 1 FAIL 2026-11-04**: BinLoader rejects an fSELF, runs a plain ELF in ScePartyDaemon without binding its imports (rip=0). **Stopped for the user's choice** ("x1, first run" below) |
+| 1 | ctl ELF (BinLoader): install / launch / close; console run x1 | **x1 run 1 FAIL 2026-11-04** (fSELF refused; plain ELF unbound in ScePartyDaemon). **BinLoader serves one connection per manual enable** (lifetime measured 16:37-16:42): the ctl cannot act without hands, so the loop takes **option 2** (manual installs, close/relaunch through phase 2). The resolver is not written |
 | 2 | Title control port (TCP 18195), heartbeat, LoadExec after the release; console run x2 | not started |
 | 3 | netpad (UDP 18196), pad.sh; console run x3 | not started |
 | 4 | `ps4ctl.sh`, the "adb" | not started |
@@ -389,6 +389,48 @@ now counts only a klog crash dump ("# proc name:" / "# reason:") as CRASH, and a
 Wine error is not a crash (fixtures `x1-wineerr.log`, `x1-ctlcrash.log`). Run 1's log now checks as
 `CRASH | crash dump: ScePartyDaemon: page fault ...`.
 
+### BinLoader's lifetime (2026-11-04 16:37-16:42, LOG.md RECORDED; `logs/20261104-164039-x1-binloader.log`)
+
+Each check was exactly one `nc -z -w3 192.168.8.184 9090`, and nothing else touched 9090.
+
+| Check | Time | State before | Result |
+|---|---|---|---|
+| a1 | 16:39:05 | enabled at the home screen at 16:37, idle | **open** |
+| a2 | 16:40:05 | 60 s after a1, still at the home screen | **closed**: a1's one empty connection turned it off |
+| c | 16:41:07 | re-enabled by hand, PS4 Wine launched (start line 16:41:06) and running | **open**: a launch does not close it |
+| d | 16:42:19 | 30 s after PS4 Wine was closed (16:41:49), not re-enabled | **closed**: closing the app does not re-arm it |
+
+**Conclusion.**
+- GoldHEN's BinLoader **serves one connection per enable**. Any connection uses it up, an empty one
+  included, whatever app runs. It is not tied to the home screen: it stays open while a title runs
+  (c). Run 1's closure at 16:12 was the port watcher's empty connection, not the title's launch.
+- A ctl therefore **can act, but only once per enable, and the enable is the user's hands**.
+  - It can act from the home screen and while PS4 Wine runs. A kill is possible in principle.
+  - It cannot act unattended: every send needs H1 ("enable BinLoader") first.
+- Not measured:
+  - Whether a payload, rather than an empty connection, also uses BinLoader up. In run 1 each of the two
+    sends followed a re-enable, so it was never seen. A one-shot server likely treats both alike; the
+    first resolver run will show it.
+  - The plan's state b ("60 s after a payload at the home screen").
+  - Whether a reboot keeps BinLoader enabled.
+
+**What it means for option 1 vs option 2.**
+- **Option 1 saves the loop no hands.** A no-hands kill, install or relaunch through the ctl costs one
+  manual enable each. That is the same effort as H4's manual install, with the extra risk of an
+  undocumented loader. Its only gain is turning "install by hand" into "enable by hand", and that is
+  not worth finishing the resolver for the loop.
+- **Option 2 is the loop's path.**
+  - Installs are manual (`CTL_INSTALL=manual`, H4).
+  - Close and relaunch move into the title (phase 2's control port, LoadExec after the release).
+  - A hung title needs hands (H2, a power cycle anyway).
+- **The registry and watchdog follow from that (to apply in phase 6):**
+  - H1 stops being "BinLoader is off": nothing in the loop needs BinLoader.
+  - H4 becomes the normal install route.
+  - The watchdog never connects to 9090. A probe would use the server up: no port watcher on 9090,
+    ever.
+- **Kept for manual use.** The ctl stays a manual tool. `ctl.sh` sends once (no pre-check), and its
+  exit 4 means "enable BinLoader".
+
 ## Console return codes
 
 None yet: no system call of the ctl ran (x1 run 1 faulted before its first import). Recorded so far:
@@ -463,10 +505,11 @@ build-time stop points (phase 0, x1, x2, x3, phase 6, host acceptance, the first
 
 ## Next step
 
-The user chooses one of the three ways on from x1 run 1 ("x1, first run" above). With option 1, the ctl's
-plain form gets an import resolver, then x1 runs again. In any case, keep the title running, and never
-connect to 9090 except to send a payload. Once x1 passes, or the user moves its duties to phase 2, the
-phase 2 prompt is:
+Phase 2 is the loop's path (BinLoader's lifetime above): the title's control port, heartbeat and LoadExec
+after the release (console run x2). In phase 2 or 6, the registry changes with it: H4 becomes the normal
+install route, H1 is dropped, and nothing in the loop ever connects to 9090. The ctl stays a manual
+tool. Its import resolver is not needed for the loop; a later session may still write it from the facts
+in "Option 1 chosen".
 
 ```
 Continue /home/maxikozie/.claude/plans/pasted-content-id-196c-goal-build-memoized-piglet.md at phase 2
