@@ -38,6 +38,9 @@ case_ x1 x1-noinstall.log    1 FAIL   "install=fail != ok"
 case_ x1 x1-oldstamp.log     1 FAIL   "stamp_match=0 != 1"
 case_ x1 x1-nohello.log      1 FAIL   "hello=none != ok kill=none != ok install=none != ok launch=none != ok stamp_match=0 != 1"
 case_ x1 x1-nolog.log        1 NOLOG  "no 'PS4WINE x1' line"
+# A live title's handled Wine error is not the ctl's crash (x1 run 1 was printed as CRASH on one).
+case_ x1 x1-wineerr.log      1 NOLOG  "no 'PS4WINE x1' line"
+case_ x1 x1-ctlcrash.log     1 CRASH  "crash dump: ScePartyDaemon: page fault (user read instruction, page not present)"
 
 if [ "$fails" -ne 0 ]; then echo "check_x_test: $fails failure(s)"; exit 1; fi
 echo "check_x_test: all passed"

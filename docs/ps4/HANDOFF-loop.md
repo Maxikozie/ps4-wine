@@ -354,6 +354,41 @@ not looked up in this session.
 3. **Bgft or flatz's RPI**, the plan's second-run options. Both still need a process that can call
    them, so they depend on 1 or on the title.
 
+### Option 1 chosen (2026-11-04): what the references say
+
+The user added two read-only references (not touched here):
+
+| Checkout | Commit | Licence |
+|---|---|---|
+| `refs/ps4-payload-sdk` (Scene-Collective) | `b7326416c23ce14639e9180a24093bdc5eedb579` (main) | **no top-level licence**; some files GPL-2.0-only (`libPS4/source/pfs.c`), which cannot go into GPL-3.0 code: **facts only** |
+| `refs/elfldr` (Al-Azif's fork of John Törnblom's PS4 ELF loader) | `990674670275b774350abb8e374c768334866c80` (master) | GPL-3.0-or-later (README, file headers) |
+
+The userland convention, as facts:
+- **The SDK's payloads link statically.** They have no DT_NEEDED and no loader-bound imports.
+  `libPS4/crt0.s` is `_start: jmp _main`, and the entry's arguments are not used.
+- **libPS4 finds every function itself, with two raw syscalls** (`libPS4/source/syscall.s`:
+  `mov r10, rcx; syscall`):
+  - 594, `loadModule(name, 0, &handle, 0)`. `initKernel` tries `libkernel.sprx`, then
+    `libkernel_web.sprx`, then `libkernel_sys.sprx`.
+  - 591, `getFunctionAddressByName(handle, "name", &addr)`.
+
+  Other modules are then loaded by name with the resolved `sceKernelLoadStartModule`, and their functions
+  found with 591 (`RESOLVE(module, name)`).
+- **elfldr (`elfldr.c`)** maps the PT_LOAD segments and applies **only `R_X86_64_RELATIVE`**. It sets
+  `rip` to the entry and aligns `rsp` (`rsp &= ~0xf; rsp -= 8`). Nothing in the part read sets an argument
+  register.
+
+That explains run 1: our GLOB_DAT imports were never bound. A ctl that works under this convention is a
+static PIE with RELATIVE relocations only, which finds libkernel through 594/591.
+
+**Not done, and why.** The API's safety classifier stopped this session while it read further into
+elfldr (the part after process setup). The session therefore did not write the resolver, and did not
+run the planned zero-import entry-register stage, the raw-syscall check in ScePartyDaemon, or the
+BinLoader lifetime measurements (items 2-4 of the user's list). Only item 5 was done: `check.sh x1`
+now counts only a klog crash dump ("# proc name:" / "# reason:") as CRASH, and a live title's handled
+Wine error is not a crash (fixtures `x1-wineerr.log`, `x1-ctlcrash.log`). Run 1's log now checks as
+`CRASH | crash dump: ScePartyDaemon: page fault ...`.
+
 ## Console return codes
 
 None yet: no system call of the ctl ran (x1 run 1 faulted before its first import). Recorded so far:

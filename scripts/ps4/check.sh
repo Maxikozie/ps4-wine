@@ -186,8 +186,15 @@ emit() { printf '%s | %s | build %s | %s | %s | %s\n' "$NOW" "$MS" "$BID" "$1" "
 if [ -z "$LINE" ]; then
     # RADV's and the winsys's own info lines explain faults without reporting one ("A write fault at
     # ring+N*32768 is offchip buffer N"), so they are not a crash.
+    if [ "$MS" = x1 ]; then
+        # x1 runs beside a live title: Wine's own handled errors ("err:seh ... syscall fault") are not the
+        # ctl's. Only a kernel crash dump on klog counts ("# proc name:" then "# reason:"), named by process.
+        FIRST_ERR="$(grep -aE '^[0-9:]+ K # (proc name|reason):' "$LOG" | sed -E 's/^[0-9:]+ K # //' |
+                     awk '/^proc name:/ { p = $3 } /^reason:/ { sub(/^reason: */, ""); print "crash dump: " p ": " $0; exit }' || true)"
+    else
     FIRST_ERR="$(grep -iE '\b(exception|fault|panic|abort)\b|CE-3' "$LOG" | grep -v 'MESA: info:' |
                  { if [ "$MS" = i1 ]; then grep -vE 'PROBE |PW_MS stage=' || true; else cat; fi; } | head -n1 || true)"
+    fi
     # d1-d3 and e1 record each stage as it ends ("PW_MS stage=<name> ...", "PW_D1" before d2): name the ones that arrived.
     STAGES=""
     if [[ "$MS" == d[123] || "$MS" == e || "$MS" == e[123] || "$MS" == f || "$MS" == f[12] || "$MS" == p[1-6] || "$MS" == p5w ||

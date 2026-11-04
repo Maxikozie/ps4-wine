@@ -1,0 +1,6 @@
+# synthetic fixture (from the x1 run of 2026-11-04): the handled Wine error, then the ctl's process dump
+16:11:56 N PW_MS start plan=l exe=C:\Psychonauts\Psychonauts.exe stages=0/5 stopped=- launches=1 resumed=- file=/data/ps4-wine/l/progress.txt
+16:12:04 N 301	8227936613	INFO	WINE 0024:err:seh:handle_syscall_fault syscall fault 0xc0000005 at /data/ps4-wine/runtime/win/wine/lib/wine/x86_64-unix/ntdll.prx+0x2dced, address 0x18
+16:17:07 K # proc name: ScePartyDaemon
+16:17:07 K # reason: page fault (user read instruction, page not present)
+16:17:07 K # fault address: 0000000000000000
