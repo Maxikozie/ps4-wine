@@ -110,6 +110,18 @@ if [ -n "$ASSETS" ]; then
     else FILES="$FILES assets/..."; fi
 fi
 
+# 4b. the package stamp (docs/ps4/HANDOFF-loop.md, decision 7): /app0/assets/stamp.txt, UTC time and build ID
+# in one token. The title prints it in its "PW_MS pkg_stamp=" start line, and ctl.sh compares that with the
+# copy beside the package (dist/NAME-<id>.stamp): the proof that an install took.
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$BID"
+if [ "$DRY" = 1 ]; then printf '  echo %s > %s/assets/stamp.txt\n' "$STAMP" "$STAGE" >&2
+else
+    mkdir -p "$STAGE/assets"
+    [ -e "$STAGE/assets/stamp.txt" ] && die "--assets already holds a stamp.txt: the package stamp is pkg.sh's"
+    printf '%s\n' "$STAMP" > "$STAGE/assets/stamp.txt"
+fi
+FILES="$FILES assets/stamp.txt"
+
 # 5. param.sfo
 SFO="$STAGE/sce_sys/param.sfo"
 run pkgtool sfo_new "$SFO" >/dev/null
@@ -137,5 +149,6 @@ fi
 ( cd "$STAGE" && pkgtool pkg_build pkg.gp4 "$OUT" >/dev/null )
 [ -f "$OUT/$CID.pkg" ] || die "PkgTool produced no $OUT/$CID.pkg"
 mv -f "$OUT/$CID.pkg" "$OUT/$PKG_BASENAME.pkg"
-log "wrote $OUT/$PKG_BASENAME.pkg ($(stat -c %s "$OUT/$PKG_BASENAME.pkg") bytes); ELF kept as build/elf/$NAME-$BID.elf"
+printf '%s\n' "$STAMP" > "$OUT/$PKG_BASENAME.stamp"
+log "wrote $OUT/$PKG_BASENAME.pkg ($(stat -c %s "$OUT/$PKG_BASENAME.pkg") bytes, stamp $STAMP); ELF kept as build/elf/$NAME-$BID.elf"
 printf '%s\n' "$OUT/$PKG_BASENAME.pkg"

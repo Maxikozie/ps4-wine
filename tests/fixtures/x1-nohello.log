@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first x1 run (logs.sh format; ctl.sh appends the x1 line with tag H)
+12:01:30 H PS4WINE x1 ctl hello=none form=self nonce=20261104120000-0a1b2c3d kill=none install=none launch=none stamp_match=0 dialog=0 done=0

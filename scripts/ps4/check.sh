@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
+usage: scripts/ps4/check.sh <a|b|c|d|d1..d4|e|e1..e3|f|f1|f2|p1..p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l|x1> [--log FILE] [--shot FILE] [--no-shot | --fb] [--note TEXT]
 
   --log FILE   log captured by logs.sh (default: the newest logs/*-<letter>.log, else newest logs/*.log)
   --shot FILE  use this image for the pixel check instead of capturing one now
@@ -121,6 +121,13 @@ USB keyboard or mouse event), faults_unresolved=0, exit=running (the user's firs
 on the menus, Raz walking, jumping and turning the camera, and the same bindings on a second launch.
 A stretch ended by a stop is a drain (the sound's end), and a pause between grains a gap; both are recorded,
 not gated.
+The loop harness's own console steps (docs/ps4/HANDOFF-loop.md; MILESTONES.md is not touched): x1 is the ctl
+ELF sent to GoldHEN's BinLoader closing, installing and relaunching PSWN00001 with no hands (fixed 2026-11-04
+before the first x1 run). ctl.sh probe composes "PS4WINE x1 ctl ..." on the host from the ctl's step lines
+and the relaunched title's "PW_MS pkg_stamp=" line; ctl.sh judge records the HDMI frame's verdict. The rule:
+hello=ok, kill=ok, install=ok, launch=ok, stamp_match=1 (the relaunched title's package stamp is the one sent)
+and dialog=0 (no system dialog on the frame taken 5 s after the relaunch). The forms, libraries, return codes
+and the reinstall sequence are recorded, not gated.
 USAGE
 }
 
@@ -141,7 +148,7 @@ while [ $# -gt 0 ]; do
         *) usage; exit 1 ;;
     esac
 done
-case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
+case "$MS" in a|b|c|d|d1|d2|d3|d4|e|e1|e2|e3|f|f1|f2|p1|p2|p3|p4|p5|p5w|p6|g1n|g1m|g1|g2|gc1|gc2|gc|gpad|g|gseg|h|j|k|i1|i|l1|l|x1) ;; -h|--help) usage; exit 0 ;; *) usage; exit 1 ;; esac
 [ "$NOSHOT" = 1 ] && [ "$FB" = 1 ] && { log "--no-shot and --fb exclude each other"; usage; exit 1; }
 if [ "$MS" = p5 ] || [ "$MS" = k ]; then
     if [ "$MS" = p5 ]; then AUDIO_WHAT="the tail's window"; else AUDIO_WHAT="the menu window"; fi
@@ -171,7 +178,7 @@ BID="$(build_id)"
 # The last line, or a longer copy of it: klog keeps 512 bytes of a line and the diagnostics record 1024,
 # and the p lines are longer than both, so a cut copy arriving last is replaced by the longest line it
 # begins (the raw netlog copy is whole). A different line arriving last (a's after its restart) stays.
-LINE="$(grep -E "PS4WINE $MS " "$LOG" | sed -E 's/^[0-9:]+ [KN] //; s/^<[0-9]+>\[[^]]*\] *//; s/^[0-9]+\t[0-9]+\t[A-Z]+\t//' |
+LINE="$(grep -E "PS4WINE $MS " "$LOG" | sed -E 's/^[0-9:]+ [KNH] //; s/^<[0-9]+>\[[^]]*\] *//; s/^[0-9]+\t[0-9]+\t[A-Z]+\t//' |
         awk '{ all[NR] = $0 } END { if (!NR) exit; line = all[NR]
               for (i = 1; i < NR; i++) if (length(all[i]) > length(line) && index(all[i], all[NR]) == 1) line = all[i]
               print line }' || true)"
@@ -382,6 +389,9 @@ case "$MS" in
     # l: fixed 2026-11-03 before the first l run (docs/ps4/HANDOFF-i.md); plus the user's word, two launches.
     l) word psychonauts; req input eq xinput; req pad_connected_at_start eq 1; req pad_reads ge 1; req kbm eq 0
        req faults_unresolved eq 0; req exit eq running ;;
+    # x1: fixed 2026-11-04 before the first x1 run (docs/ps4/HANDOFF-loop.md phase 1).
+    x1) word ctl; req hello eq ok; req kill eq ok; req install eq ok; req launch eq ok; req stamp_match eq 1
+        req dialog eq 0 ;;
     j) word psychonauts; req exe_base eq 0x00400000; req dll_missing eq 0; req presents ge 3600; req save_new eq 1
        req pad_reads ge 1; req session_s ge 600 ;;
     h) word vtmb; req session_s ge 1800; req fps_avg ge 20; req faults_unresolved eq 0; req saved eq 1; req loaded eq 1

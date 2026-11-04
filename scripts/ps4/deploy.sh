@@ -6,16 +6,15 @@ set -euo pipefail
 
 usage() {
     cat <<USAGE
-usage: scripts/ps4/deploy.sh FILE.pkg [--dest DIR] [--name NAME] [--install] [--dry-run]
+usage: scripts/ps4/deploy.sh FILE.pkg [--dest DIR] [--name NAME] [--dry-run]
        scripts/ps4/deploy.sh FILE.elf [--dry-run]
 
   FILE.pkg     uploaded in binary mode to ftp://$PS4_HOST:$PS4_FTP_PORT$PS4_PKG_DIR/NAME,
                then the remote size is compared with the local one
   --dest DIR   remote directory (default $PS4_PKG_DIR)
   --name NAME  remote file name (default: the local basename)
-  --install    after the upload, POST to GoldHEN's remote package installer
-               (http://$PS4_HOST:$PS4_RPI_PORT/api/install); on any failure print how to
-               install by hand (GoldHEN > Package Installer > $PS4_PKG_DIR)
+  --install    removed (it exited 0 even when the POST failed): use scripts/ps4/ctl.sh install;
+               exits 2
   FILE.elf     raw ELF bytes to BinLoader on $PS4_HOST:$PS4_BINLOADER_PORT (enable it in GoldHEN first)
   --dry-run    print what would be done
 USAGE
@@ -24,12 +23,12 @@ USAGE
 [ $# -ge 1 ] || { usage; exit 1; }
 case "$1" in -h|--help) usage; exit 0 ;; esac
 FILE="$1"; shift
-DEST="$PS4_PKG_DIR"; NAME=""; INSTALL=0; DRY=0
+DEST="$PS4_PKG_DIR"; NAME=""; DRY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --dest) DEST="$2"; shift 2 ;;
         --name) NAME="$2"; shift 2 ;;
-        --install) INSTALL=1; shift ;;
+        --install) log "deploy.sh --install is gone: use scripts/ps4/ctl.sh install FILE.pkg"; exit 2 ;;
         --dry-run) DRY=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage; exit 1 ;;
@@ -47,34 +46,17 @@ case "$FILE" in
         log "sent $(stat -c %s "$FILE") bytes"
         ;;
     *.pkg)
-        URL="ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/$NAME"
+        URL="$(ftp_url "$DEST/$NAME")"
         log "uploading $FILE -> $URL"
         if [ "$DRY" = 1 ]; then
-            echo "  curl --ftp-pasv --ftp-create-dirs -T $FILE $URL"
-            echo "  curl ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/   # verify size of $NAME"
-            [ "$INSTALL" = 1 ] && echo "  curl -X POST http://$PS4_HOST:$PS4_RPI_PORT/api/install -d '{\"type\":\"direct\",\"packages\":[\"file://$DEST/$NAME\"]}'"
+            echo "  curl --ftp-pasv --ftp-create-dirs --max-time $PS4_FTP_MAX_TIME -T $FILE $URL"
+            echo "  curl $(ftp_url "$DEST/")   # verify size of $NAME"
             exit 0
         fi
         nc -z -w3 "$PS4_HOST" "$PS4_FTP_PORT" || die "FTP port $PS4_FTP_PORT closed on $PS4_HOST"
-        curl -sS --ftp-pasv --ftp-create-dirs -T "$FILE" "$URL"
-        LOCAL_SIZE="$(stat -c %s "$FILE")"
-        REMOTE_SIZE="$(curl -sS "ftp://$PS4_HOST:$PS4_FTP_PORT$DEST/" | awk -v n="$NAME" '$NF == n { print $5 }' | tail -n1)"
-        [ "$REMOTE_SIZE" = "$LOCAL_SIZE" ] || die "size mismatch after upload: local $LOCAL_SIZE, remote '${REMOTE_SIZE:-none}' (FTP can corrupt large files: retry)"
-        log "upload verified: $LOCAL_SIZE bytes at $DEST/$NAME"
-        if [ "$INSTALL" = 1 ]; then
-            if nc -z -w3 "$PS4_HOST" "$PS4_RPI_PORT" 2>/dev/null && \
-               RESP="$(curl -sS --max-time 10 -X POST "http://$PS4_HOST:$PS4_RPI_PORT/api/install" \
-                         -H 'Content-Type: application/json' \
-                         -d "{\"type\":\"direct\",\"packages\":[\"file://$DEST/$NAME\"]}")" && \
-               printf '%s' "$RESP" | grep -q '"status" *: *"success"'; then
-                log "remote installer accepted it: $RESP"
-            else
-                log "remote install not available or refused (${RESP:-no response}); install by hand:"
-                log "  PS4: GoldHEN > Package Installer > $DEST > $NAME"
-            fi
-        else
-            log "install by hand: GoldHEN > Package Installer > $DEST > $NAME"
-        fi
+        ftp_put "$FILE" "$DEST/$NAME" || die "upload of $NAME failed or its size differs (FTP can corrupt large files: retry)"
+        log "upload verified: $(stat -c %s "$FILE") bytes at $DEST/$NAME"
+        log "install: scripts/ps4/ctl.sh install $DEST/$NAME, or by hand: GoldHEN > Package Installer > $DEST > $NAME"
         ;;
     *) die "unknown file type (expected .pkg or .elf): $FILE" ;;
 esac

@@ -18,7 +18,7 @@ this file wins.
 | Phase | What | State |
 |---|---|---|
 | 0 | Spike: headless CLI semantics | **done 2026-11-04, at its stop point** (results below) |
-| 1 | ctl ELF (BinLoader): install / launch / close; console run x1 | not started |
+| 1 | ctl ELF (BinLoader): install / launch / close; console run x1 | **x1 run 1 FAIL 2026-11-04**: BinLoader rejects an fSELF, runs a plain ELF in ScePartyDaemon without binding its imports (rip=0). **Stopped for the user's choice** ("x1, first run" below) |
 | 2 | Title control port (TCP 18195), heartbeat, LoadExec after the release; console run x2 | not started |
 | 3 | netpad (UDP 18196), pad.sh; console run x3 | not started |
 | 4 | `ps4ctl.sh`, the "adb" | not started |
@@ -187,9 +187,177 @@ Decisions 1-10 of the plan, short:
   only one case was seen.
 - Hooks inside a subagent that writes. Only a read (Explore's Bash) was seen in a subagent.
 
+## Phase 1: the ctl (2026-11-04, built and host-tested; x1 pending)
+
+**Where the work is.** A worktree, `.claude/worktrees/loop-phase1` (branch `worktree-loop-phase1`, from
+`f45fbef`), with its own clone of the fork at `third_party/prospero-win` (detached at `19bc0ca`, cloned with
+`--reference` to the main fork). Nothing is committed (the user commits). The title was built there against
+the main tree's `build/orbis-compat*`, `build/src/mesa-ps4` and the main fork's `.deps/wine-orbis/prx`
+(read only; env overrides `ORBIS_COMPAT_BUILD`, `ORBIS_COMPAT_STAGE`, `MESA_SRC_DIR`, `WINE_PRX_DIR`).
+
+**What BinLoader runs is unknown.** This changes the plan's picture. Nothing in this repo or `refs/`
+documents GoldHEN's BinLoader, and its source is private ([GoldHEN](https://github.com/GoldHEN/GoldHEN):
+"Project source code is currently private"). Its release notes say only "BinLoader Server on 9090 port"
+and, in v2.4b17.3, "Improved BinLoader server (more payloads supported)". Two facts, both from
+[orbisRPC](https://github.com/SirHumza/orbisRPC):
+- **The fSELF form.** Its legacy OpenOrbis build (`scripts/build.sh`) links `crt1.o` with `link.x`,
+  `-lc -lkernel ...` and `create-fself --eboot --paid 0x3800000000000011`. It then deploys the result as
+  `/data/GoldHEN/payloads/orbisrpc.bin`.
+- **The plain form.** Its shipping build is a ps4-payload-sdk ELF placed in `/data/payloads/`. Its
+  `docs/BUILDING.md` says: "Never link `libkernel.so` (or any app-world `.so`). A spawned payload with
+  unresolvable imports is SIGKILLed before `main()`". The allowed set is `libkernel_web.sprx`,
+  `libSceLibcInternal.sprx`, `libSceNet.sprx` and `libSceSystemService.sprx`. The SDK's CRT also patches
+  per firmware, which we must not do (no firmware offsets).
+
+So the ctl comes in **two forms from one source**, and x1 finds out which one runs.
+
+**The ctl** (`ctl/ctl.c`, `ctl/ctl_cmd.h`, `ctl/ctl_rt.c`; GPL-3.0; no code from another project)
+- **Imports.** It uses no libc at all: it has its own formatter. It imports only libkernel (and libSceNet
+  through `probes/probe_netlog.c`). LncUtil, SystemService, SysCore, AppInstUtil, UserService and Bgft
+  are loaded with `sceKernelLoadStartModule` from `/system/common/lib/` and then `/system/priv/lib/`, and
+  their calls are found with `sceKernelDlsym`. Every load and every missing symbol is logged.
+  - The LncUtil calls are looked up in `libSceSystemService.sprx` first, then in a module named
+    `libSceLncUtil.sprx` (whether that file exists is unknown).
+- **The fSELF form** (`dist/ctl-<id>.elf`) is the probe's link without the pkg step: `crt1.o`, `link.x`,
+  `libc.a`, `-lkernel -lSceNet`. `ctl.sh` patches a copy, then runs `create-fself --eboot` on it. The
+  block survives `create-fself` (one magic in the `.bin`, checked on every send).
+- **The plain form** (`dist/ctl-plain-<id>.elf`) has its own `_start` (its argument is ignored). It is
+  an ET_DYN with no `PT_INTERP`, `-z now`, page-aligned segments, and GLOB_DAT relocations only
+  (`-fno-plt`). Its two DT_NEEDED entries are generated stubs with sonames `libkernel_web.sprx` and
+  `libSceNet.sprx`. `build.sh ctl` refuses any other NEEDED list and any raw `syscall`.
+- **Steps and lines.** hello (pid, `sceKernelGetAppInfo`, the sandbox word, the /data result file),
+  load/dlsym, init, user, bigapp (both proofs), exists, then the op. The result file is
+  `/data/ps4-wine/ctl/<nonce>.txt`, fsync'd after every line. hello and done also go to klog.
+  - `getprogname` is not in libkernel's stub, so the process name is not logged. hello's `app_title`
+    and `sandbox` stand in for it.
+- **Calls whose arguments are a guess** (the facts used are written in `ctl.c`):
+  - `sceAppInstUtilAppInstallPkg(path, MetaInfo*)`: six string pointers, `uri` = the package, the content
+    ID, the name "ps4-wine", the rest empty.
+  - `LncAppParam{32 bytes, user, 0, 0, SkipSystemUpdate}`.
+  - `sceSystemServiceKillApp(app, -1, 0, 0)`, used as the fallback when `sceLncUtilKillApp` fails.
+  - `sceSystemServiceLaunchApp(title, argv, param)`, used as the fallback when `sceLncUtilLaunchApp` fails.
+  - `sceLncUtilGetResultKillApp(app)`: its return code is logged only.
+  - `sceAppInstUtilGetInstallProgressInfo(content_id, ...)`: polled for at most 300 s. The run ends when
+    the task disappears after it was seen, at 100 %, or after 10 s without a task; then `AppExists`
+    decides the result.
+
+**Safety (compiled in, each one tested on the host).**
+- **Kill** needs `proof_info` (SysCore's title ID of the big app) or `proof_lnc` (`GetAppId(PSWN00001)`
+  equals the big app), and no contrary proof. It is refused with `same_pid` (the block's title pid is
+  ctl's pid) and with `same_app` (ctl's own app ID is the big app's).
+- **Install** needs `GetTitleIdFromPkg` = PSWN00001 and the title not running.
+- **Launch** starts PSWN00001 only: the title ID is compiled in, never taken from the block.
+- **cycle/probe** stop at the first step that fails.
+
+**`scripts/ps4/ctl.sh`** (`--help`)
+- **Commands.** `status|kill|install PKG|launch ARGS|cycle PKG ARGS|probe PKG` and `judge`.
+- **Options.** `--form self|elf|auto`. With auto, the form cached in `build/ctl/form` is used. With no
+  cached form, a status is sent in each form, fSELF first, and the first form that says hello is cached.
+  Other options: `--log`, `--title-pid` (default: the newest `PW_MS ... pid=` in the log),
+  `--console-dry`, `--patch-only`, `--dry-run`, `--print-layout`.
+- **Packages.** A local `.pkg` is uploaded to `/data/pkg/` with `ftp_put`, and its size is checked first.
+- **Waiting.** It waits for hello (20 s), then for done, in the log and in the result file over FTP.
+- **Exit codes** as in the plan (0/2/3/4/5, plus 1 for usage).
+- **probe** waits up to 120 s for the relaunched title's `PW_MS pkg_stamp=`. It then appends
+  `PS4WINE x1 ctl ...` (host tag `H`) with `dialog=unjudged`.
+- **judge** `--dialog 0|1 --shot FILE` appends the line again with the verdict, `dialog_by=eye`. No
+  classifier for system dialogs exists before phase 4's `shot --classify`, so the x1 frame is judged by eye.
+
+**Other files**
+- `common.sh`: `ftp_put/ftp_get/ftp_size/ftp_rename` with `--max-time` (`PS4_FTP_BASE=file://` for
+  tests). `deploy.sh` uploads through `ftp_put`, and `--install` exits 2 ("use ctl.sh install").
+- `pkg.sh` writes `assets/stamp.txt` (`<UTC>Z-<build id>`, one token) into every package, plus
+  `dist/<pkg>.stamp` beside it.
+- Fork `native/orbis/wine64_main_orbis.c`: one `PW_MS pkg_stamp=<stamp> argv=<a,b> pid=<n>` line at
+  start, on every sink (klog, netlog, diagnostics). The fork does not name this repo.
+- `check.sh x1` passes on `hello=ok kill=ok install=ok launch=ok stamp_match=1 dialog=0`. It accepts
+  the host tag `H`.
+
+**Host tests** (`build.sh probe-test`, exit 0 on 2026-11-04)
+- `tests/ctl_test.sh` (66 cases):
+  - `ctl.c` built for the host with `tests/ctl_fake_console.c` (UBSan, no recovery): every refusal,
+    the overwrite sequence, the SystemService fallbacks, and the stop of a cycle;
+  - `ctl.sh`'s offsets against the header (`tests/ctl_block_dump.c`), patching, refusals (0 or 2 magics,
+    a 64-byte argument, 9 arguments, bad paths), `--dry-run`;
+  - end to end through a fake BinLoader that runs the host-built `ctl.c` on the patched payload:
+    exit codes 0/2/3/4/5, upload, the auto form and its cache, `probe` → `check.sh x1` FAIL (unjudged)
+    → `judge` → PASS, and a stale stamp.
+- `tests/check_x_test.sh`: 9 fixtures.
+
+**Not tested before x1** (x1 measures them):
+- what BinLoader does with either form;
+- the process the ctl gets, and whether it may load the system libraries and call LncUtil and
+  AppInstUtil;
+- every return code;
+- whether `AppInstallPkg` takes a /data path, and whether a reinstall needs PrepareOverwrite;
+- whether the title starts with `--ctl-x1`.
+
+Not covered by x1 at all: whether BinLoader stays enabled after a reboot.
+
+### The x1 run (procedure)
+
+1. **The user.** Power the PS4 on, load GoldHEN, and enable FTP, klog and **BinLoader**. Launch PS4 Wine,
+   the installed PSWN00001, and leave it running. Claude has `view.sh` open (the desktop entry's
+   `--sink`).
+2. **Claude.**
+   - Check that 2121, 3232 and 9090 are open.
+   - Start the log first, in the main checkout's logs dir:
+     `LOGS_DIR=/home/maxikozie/ps4-wine/logs systemd-inhibit --what=sleep scripts/ps4/logs.sh --label x1 &`.
+   - Then run `scripts/ps4/ctl.sh --log <that file> probe dist/ps4-wine-19bc0ca+dirty.pkg` (auto form). It
+     uploads the package, sends a status in the fSELF form (and the plain form if that one is silent),
+     then the probe.
+3. **The frame.** Close the viewer (`pgrep -x` PID), take `shot.sh` within ~5 s of the relaunch, and
+   reopen the viewer. Look at the frame, then run `ctl.sh judge --log ... --dialog 0|1 --shot ...`.
+4. **The record.** `check.sh x1 --log ...`, then one LOG.md line. The return codes go into the table below.
+5. **If neither form says hello:** H1/H2 do not apply (the console answered FTP). Record x1 as FAIL
+   with what 9090 did (nc's reply bytes are kept beside the payload in `build/ctl/send/`), and stop.
+   The user then chooses the second run (the plan's Bgft / RPI options), or `CTL_INSTALL=manual`.
+
+### x1, first run (2026-11-04 16:11-16:18, LOG.md: FAIL; `logs/20261104-161137-x1.log`)
+
+The title (`efdfeae+dirty`, plan l) ran as PSWN00001 throughout. The package was uploaded but not
+installed. What was measured:
+- **BinLoader 9090 closes.** It was open at 16:11:30, when the port watcher made **one empty connection**
+  (`nc -z`). It was closed by 16:12:08, while FTP and klog stayed up. Either BinLoader serves one
+  connection and stops, or it stopped when the title launched at 16:11:56. Not settled. The user
+  re-enabled it by hand before each send. `ctl.sh` no longer checks the port before a send; the send's
+  own connection decides (exit 4 when nc fails).
+- **fSELF rejected.** The fSELF form (`create-fself --eboot`, 92272 B) was refused on screen: "invalid
+  payload format". orbisRPC's legacy route does not apply to 9090.
+- **Plain ELF accepted, imports never bound.** The plain ELF form (57104 B, ET_DYN, NEEDED
+  `libkernel_web.sprx` + `libSceNet.sprx`) was accepted and ran in a **new process, `ScePartyDaemon`**.
+  - Modules loaded there: `libkernel_sys.sprx` (no `libkernel_web`), `libSceLibcInternal`,
+    `libSceSysmodule`, `libSceNet`, `libSceNetCtl`, `libSceSystemService`, `libSceUserService`,
+    `libSceRegMgr`, `libSceNpManager`, AudioOut and others. Paths were under the sandbox word
+    `/AsQonIClUj/common/lib/`; the eboot is `/app0/eboot.bin`.
+  - It faulted at **rip=0** (BrF 0x5a48, the only backtrace entry 0x832984043 in libkernel_sys's text),
+    with every argument register 0. No hello and no result file followed. The loader bound none of the
+    imports, so the first call through the GOT went to 0.
+- **The console was unharmed.** PS4 Wine kept running, and klog printed GoldHEN's "copyin: GoldHENLoader
+  has nonsleeping lock" in the middle of the dump.
+
+**What it means.** GoldHEN's loader runs ELFs in the ScePartyDaemon process, as ps4-payload-sdk payloads
+are run. It does not do the dynamic linking our ELF needs: the payload (its crt) must find its own
+imports. How the SDK's crt does that, and what the loader passes to the entry point, is the open
+question. A research subagent for it was **stopped by the API's cyber safeguards**, and the answer was
+not looked up in this session.
+
+**Stop (user's choice).**
+1. **The user supplies the convention.** For example, put a checkout of the PS4 payload SDK under
+   `refs/` (read only; the user adds it), or point to its documentation of the entry arguments and
+   import resolution. The ctl's plain form then gets its own small import resolver, our code, with no
+   firmware offsets. The firmware-gated parts of that SDK's crt are out of bounds (CLAUDE.md: no
+   exploit work, no firmware-specific kernel offsets).
+2. **Skip BinLoader.** Use `CTL_INSTALL=manual` (registry H4) for installs. Move closing and relaunching
+   into the title itself, which is phase 2's control port: a LoadExec restart covers "launch again". Only
+   the kill of a hung title then needs hands (H2).
+3. **Bgft or flatz's RPI**, the plan's second-run options. Both still need a process that can call
+   them, so they depend on 1 or on the title.
+
 ## Console return codes
 
-None yet. Phase 1 (x1) records LncUtil, AppInstUtil, SystemService, SysCore, UserService and Bgft here.
+None yet: no system call of the ctl ran (x1 run 1 faulted before its first import). Recorded so far:
+GoldHEN BinLoader's on-screen "invalid payload format" for an fSELF.
 
 ## Limits (defaults decided at phase 6's stop)
 
@@ -248,12 +416,24 @@ build-time stop points (phase 0, x1, x2, x3, phase 6, host acceptance, the first
 - `docs/ps4/HANDOFF-loop.md`: this file.
 - Raw output in `logs/loop/spike/run{1,2,3}/` (gitignored): `NAME.{cmd,out,err,rc}`, hook logs,
   `summary.tsv`, and the four plan files the plan-mode items wrote.
+- Phase 1 (uncommitted, in the worktree):
+  - new: `ctl/ctl.c`, `ctl/ctl_cmd.h`, `ctl/ctl_rt.c`, `scripts/ps4/ctl.sh`, `tests/ctl_test.sh`,
+    `tests/ctl_fake_console.c`, `tests/ctl_block_dump.c`, `tests/check_x_test.sh`, `tests/fixtures/x1-*.log`;
+  - changed: `build.sh` (target `ctl`, two tests in `probe-test`), `check.sh` (`x1`, the `H` tag),
+    `common.sh` (FTP helpers), `deploy.sh` (no `--install`), `pkg.sh` (the stamp), and this file;
+  - the fork's `native/orbis/wine64_main_orbis.c` (the start line);
+  - built: `dist/ctl-f45fbef+dirty.elf`, `dist/ctl-plain-f45fbef+dirty.elf`, and
+    `dist/ps4-wine-19bc0ca+dirty.pkg` (stamp `20261104T041616Z-19bc0ca+dirty`).
+  - Fork `make test`: exit 0.
 
 ## Next step
 
-Phase 1, in a fresh session (prompt above):
-1. Build the ctl ELF, `ctl.sh`, the `pkg_stamp`/pid start line, `check.sh x1` with fixtures, and the host
-   tests.
-2. Then the user enables BinLoader in GoldHEN and has the current PSWN00001 installed and running;
-   `view.sh` is opened with the desktop entry's `--sink`.
-3. Then one console run, x1: one LOG.md line, and a stop.
+The user chooses one of the three ways on from x1 run 1 ("x1, first run" above). With option 1, the ctl's
+plain form gets an import resolver, then x1 runs again. In any case, keep the title running, and never
+connect to 9090 except to send a payload. Once x1 passes, or the user moves its duties to phase 2, the
+phase 2 prompt is:
+
+```
+Continue /home/maxikozie/.claude/plans/pasted-content-id-196c-goal-build-memoized-piglet.md at phase 2
+(the title control port, heartbeat, LoadExec after the release; console run x2). Read docs/ps4/HANDOFF-loop.md first, then CLAUDE.md.
+```

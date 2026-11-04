@@ -120,3 +120,28 @@ oo_tool() {
     done
     return 1
 }
+
+# FTP to the console (GoldHEN, port $PS4_FTP_PORT), one curl call each, bounded by PS4_FTP_MAX_TIME
+# seconds (lifted from deploy.sh and game.sh, with --max-time added; HANDOFF-loop.md phase 1).
+# PS4_FTP_BASE replaces ftp://host:port (the host tests use a file:// URL).
+PS4_FTP_MAX_TIME="${PS4_FTP_MAX_TIME:-600}"
+ftp_url() { printf '%s%s' "${PS4_FTP_BASE:-ftp://$PS4_HOST:$PS4_FTP_PORT}" "$1"; }
+# ftp_size REMOTE_PATH: the size from the directory listing.
+ftp_size() {
+    local dir="${1%/*}/" name="${1##*/}"
+    if [[ "${PS4_FTP_BASE:-}" == file://* ]]; then stat -c %s "${PS4_FTP_BASE#file://}$1" 2>/dev/null; return; fi
+    curl -sS --ftp-pasv --max-time 30 "$(ftp_url "$dir")" 2>/dev/null |
+        awk -v n="$name" '$NF == n { s = $5 } END { if (s == "") exit 1; print s }'
+}
+# ftp_put LOCAL REMOTE_PATH: upload in binary mode, then compare the remote size with the local one.
+ftp_put() {
+    local size remote
+    curl -sS --ftp-pasv --ftp-create-dirs --max-time "$PS4_FTP_MAX_TIME" -T "$1" "$(ftp_url "$2")" || return 1
+    size="$(stat -c %s "$1")"
+    remote="$(ftp_size "$2" || true)"
+    [ "$remote" = "$size" ] || { log "ftp_put: $2 is ${remote:-missing} bytes on the console, $size here"; return 1; }
+}
+# ftp_get REMOTE_PATH LOCAL
+ftp_get() { curl -sS --ftp-pasv --max-time "$PS4_FTP_MAX_TIME" -o "$2" "$(ftp_url "$1")"; }
+# ftp_rename FROM TO (console paths)
+ftp_rename() { curl -sS --ftp-pasv --max-time 30 -Q "RNFR $1" -Q "RNTO $2" "$(ftp_url /)" -o /dev/null; }

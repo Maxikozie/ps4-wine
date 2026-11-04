@@ -1,0 +1,2 @@
+# synthetic fixture, written before the first x1 run (logs.sh format; ctl.sh appends the x1 line with tag H)
+12:00:00 K [logs.sh] klog connection closed, reconnecting

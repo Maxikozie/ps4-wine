@@ -7,7 +7,7 @@ set -euo pipefail
 usage() {
     cat <<USAGE
 usage: scripts/ps4/build.sh --check-toolchain
-       scripts/ps4/build.sh <compat|mesa|probe|probe-test|triangle|lowbase|wine|wine-desktop|title|all>
+       scripts/ps4/build.sh <compat|mesa|probe|probe-test|ctl|triangle|lowbase|wine|wine-desktop|title|all>
 
   --check-toolchain  report every host tool, SDK path and reference checkout the
                      port needs; exit 1 if a required one is missing
@@ -16,7 +16,11 @@ usage: scripts/ps4/build.sh --check-toolchain
                      (--prx: the copy for libvulkan.prx, with emulated TLS -> build/mesa-ps4-prx; milestone e)
   probe              probes/ -> build/probe/probe.elf + probe_mod.prx -> dist/probe-<id>.pkg
                      (milestone a; the probe is also the hello-world: it prints "PS4WINE a hello")
-  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g, j, i1, i, l1)
+  probe-test         host unit tests: the probe's and the triangle's pure helpers, check.sh's rules (a-f, p1-p6, g, j, i1, i, l1, x1), ctl.c and ctl.sh (tests/ctl_test.sh)
+  ctl                ctl/ (the loop harness's console control, docs/ps4/HANDOFF-loop.md phase 1)
+                     -> dist/ctl-<id>.elf (the fSELF form's ELF: crt1.o, libc.a, libkernel, libSceNet; ctl.sh
+                     wraps a patched copy with create-fself --eboot) and dist/ctl-plain-<id>.elf (no libc,
+                     imports libkernel_web.sprx and libSceNet.sprx only); both carry an empty command block
   triangle           probes/triangle.c + RADV + the kit's vkloader -> build/triangle/triangle.elf
                      -> dist/triangle-<id>.pkg (title $TRIANGLE_TITLE_ID; milestone b)
   lowbase            probes/lowbase/ (a stub eboot + lowbase.prx, which releases the eboot's segments)
@@ -310,6 +314,62 @@ build_probe() {
     "$SCRIPT_DIR/pkg.sh" --elf "$out/probe.elf" --name probe --assets "$out/assets"
 }
 
+# ctl/ -> build/ctl/{ctl.elf,ctl-plain.elf} -> dist/ctl-<id>.elf, dist/ctl-plain-<id>.elf (HANDOFF-loop.md
+# phase 1). One source, no libc calls, two forms: the fSELF form is the probe's link without the pkg step
+# (crt1.o, link.x, libc.a, libkernel, libSceNet); the plain form has its own _start and imports only from
+# stubs named libkernel_web.sprx and libSceNet.sprx (the ps4-payload-sdk import set), generated here from
+# the objects' undefined symbols. Neither needs orbis-compat.
+build_ctl() {
+    local out="$BUILD_DIR/ctl" oo="$OO_PS4_TOOLCHAIN" bid bad f n need cf=()
+    [ -n "$PS4_NETLOG_HOST" ] || die "cannot work out this host's address towards $PS4_HOST; set PS4_NETLOG_HOST"
+    [ -f "$oo/link.x" ] || die "no OpenOrbis toolchain at $oo (setup-host.sh --install-toolchain)"
+    bid="$(build_id)"
+    cf=(--target=x86_64-pc-freebsd12-elf -fPIC -isysroot "$oo" -isystem "$oo/include" -D__ORBIS__ -D_BSD_SOURCE
+        -march=btver2 -fno-omit-frame-pointer -fno-stack-protector -fno-plt -O2 -Wall -Wextra -Werror
+        -I"$REPO_ROOT/ctl" -I"$REPO_ROOT/probes"
+        -DCTL_BUILD_ID="\"$bid\"" -DCTL_TITLE_ID="\"$TITLE_ID\"" -DCTL_CONTENT_ID="\"$CONTENT_ID\""
+        -DCTL_DATA_ROOT="\"$PS4_DATA_ROOT\"" -DPROBE_NETLOG_HOST="\"$PS4_NETLOG_HOST\"" -DPROBE_NETLOG_PORT="$PS4_NETLOG_PORT")
+    rm -rf "$out"; mkdir -p "$out/obj" "$out/stubs" "$DIST_DIR"
+    log "ctl: build $bid, netlog -> $PS4_NETLOG_HOST:$PS4_NETLOG_PORT"
+    clang "${cf[@]}" -DCTL_FORM='"self"' -c "$REPO_ROOT/ctl/ctl.c" -o "$out/obj/ctl.o"
+    clang "${cf[@]}" -DCTL_FORM='"elf"' -DCTL_PLAIN -c "$REPO_ROOT/ctl/ctl.c" -o "$out/obj/ctl-plain.o"
+    clang "${cf[@]}" -c "$REPO_ROOT/ctl/ctl_rt.c" -o "$out/obj/ctl_rt.o"
+    clang "${cf[@]}" -c "$REPO_ROOT/probes/probe_netlog.c" -o "$out/obj/probe_netlog.o"
+    # A raw syscall instruction outside libkernel kills the process: none in our objects.
+    bad="$(llvm-objdump -d "$out"/obj/*.o | grep -cw syscall || true)"
+    [ "$bad" = 0 ] || die "ctl objects contain $bad raw syscall instruction(s)"
+
+    # The fSELF form: the probe's link line.
+    ld.lld -m elf_x86_64 -pie --script "$oo/link.x" --eh-frame-hdr "$out/obj/ctl.o" "$out/obj/probe_netlog.o" \
+        -L"$oo/lib" -lc -lkernel -lSceNet "$oo/lib/crt1.o" -o "$out/ctl.elf"
+
+    # The plain form: one stub per imported library, every undefined name a function.
+    llvm-nm --defined-only "$out/obj/ctl-plain.o" "$out/obj/probe_netlog.o" "$out/obj/ctl_rt.o" |
+        awk 'NF == 3 { print $3 }' | LC_ALL=C sort -u > "$out/stubs/defined.txt"
+    llvm-nm -u "$out/obj/ctl-plain.o" "$out/obj/probe_netlog.o" "$out/obj/ctl_rt.o" | awk 'NF == 2 { print $2 }' |
+        LC_ALL=C sort -u | LC_ALL=C comm -23 - "$out/stubs/defined.txt" > "$out/stubs/imports.txt"
+    grep -E '^sceNet' "$out/stubs/imports.txt" | sed 's/.*/void &(void) {}/' > "$out/stubs/net.c" || true
+    grep -vE '^sceNet' "$out/stubs/imports.txt" | sed 's/.*/void &(void) {}/' > "$out/stubs/kernel.c" || true
+    for f in kernel:libkernel_web.sprx net:libSceNet.sprx; do
+        clang --target=x86_64-pc-freebsd12-elf -fPIC -c "$out/stubs/${f%%:*}.c" -o "$out/stubs/${f%%:*}.o"
+        ld.lld -m elf_x86_64 -shared -soname "${f#*:}" "$out/stubs/${f%%:*}.o" -o "$out/stubs/${f#*:}"
+    done
+    ld.lld -m elf_x86_64 -pie -e _start -z now -z max-page-size=16384 -z separate-loadable-segments --no-rosegment --hash-style=sysv \
+        "$out/obj/ctl-plain.o" "$out/obj/probe_netlog.o" "$out/obj/ctl_rt.o" \
+        "$out/stubs/libkernel_web.sprx" "$out/stubs/libSceNet.sprx" -o "$out/ctl-plain.elf"
+
+    for f in ctl.elf ctl-plain.elf; do
+        n="$(grep -c -obUaF 'PS4WINE-CTL-CMD1' "$out/$f" || true)"
+        [ "$n" = 1 ] || die "$f holds $n copies of the command block's magic (want 1)"
+        need="$(llvm-readelf -d "$out/$f" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')"
+        log "ctl: $f $(stat -c %s "$out/$f") bytes, needs: $need"
+    done
+    [ "$need" = "libkernel_web.sprx libSceNet.sprx " ] || die "ctl-plain.elf needs '$need' (want libkernel_web.sprx libSceNet.sprx)"
+    command cp -f "$out/ctl.elf" "$DIST_DIR/ctl-$bid.elf"
+    command cp -f "$out/ctl-plain.elf" "$DIST_DIR/ctl-plain-$bid.elf"
+    printf '%s\n' "$DIST_DIR/ctl-$bid.elf" "$DIST_DIR/ctl-plain-$bid.elf"
+}
+
 # probes/lowbase/ -> build/lowbase/{stub.elf, lowbase.prx, lowbase_mod.prx, lowbase_mod2.prx}
 # -> dist/lowbase-<id>.pkg (title $LOWBASE_TITLE_ID; milestone i1, docs/ps4/HANDOFF-i.md).
 # The PRXs follow the fork's ld_prx recipe (third_party/prospero-win/tools/build_wine_orbis.sh
@@ -471,6 +531,8 @@ probe_test() {
     "$REPO_ROOT/tests/check_psy_test.sh"
     "$REPO_ROOT/tests/check_i_test.sh"
     "$REPO_ROOT/tests/check_l_test.sh"
+    "$REPO_ROOT/tests/check_x_test.sh"
+    "$REPO_ROOT/tests/ctl_test.sh"
     "$REPO_ROOT/tests/game_sh_test.sh"
     "$REPO_ROOT/tests/profile_parse_test.sh"
     "$REPO_ROOT/tests/psy_bindings_test.sh"
@@ -639,6 +701,7 @@ case "$1" in
     mesa) shift; build_mesa "$@" ;;
     probe) build_probe ;;
     probe-test) probe_test ;;
+    ctl) build_ctl ;;
     triangle) build_triangle ;;
     lowbase) shift; build_lowbase "$@" ;;
     wine) shift; build_wine "$@" ;;
