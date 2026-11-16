@@ -1,5 +1,9 @@
 # ps4-wine
 
+> **Parked 2026-11-16.** Work continues in `~/orbis-win`, our fork of plastikman/orbis-win. This repo is now a
+> read-only reference there (`refs/ps4-wine`): findings, measurements and code to take from. Don't start new
+> work here. The fork's upstream merge to `18115ce` was dropped; its branch `orbis` stays at `cdf0df9`.
+
 Wine for a jailbroken PS4 Slim (Orbis OS, OpenOrbis toolchain, GoldHEN), built
 on prospero-win's design: Wine's PE side, Unix side and wineserver all inside
 one PS4 title, 32-bit games on prospero-win's translator (native WoW64 when the
